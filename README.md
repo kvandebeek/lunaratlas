@@ -49,4 +49,4 @@ depends on this repository; this one depends on nothing.
 [Apache License 2.0](LICENSE). Use it, change it, build on it, commercially or not; keep the copyright
 notice and say where it came from.
 
-If it saved you time, a coffee is welcome but never expected.
+If it saved you time, [sponsoring](https://github.com/sponsors/kvandebeek) is welcome but never expected.
