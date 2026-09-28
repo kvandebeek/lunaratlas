@@ -1,0 +1,520 @@
+{
+ "07f32dffee": {
+  "name": "2026-08-05-0508_2-Moon_R_lapl2_ap1690_Drizzle15.tif",
+  "verdict": "good",
+  "t": "2026-09-27T22:26:34.424Z"
+ },
+ "8a019d0db0": {
+  "name": "2026-09-22-2120_9-Moon_Filter 4_lapl2_ap12765_Drizzle15.tif",
+  "reasons": [
+   "blurry"
+  ],
+  "t": "2026-09-27T22:26:48.711Z",
+  "verdict": "borderline"
+ },
+ "dbcee0df84": {
+  "name": "2026-09-23-2138_1-Moon_Filter 4_lapl2_ap5276_Drizzle15.tif",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:27:02.266Z",
+  "reasons": [
+   "blurry",
+   "noisy",
+   "colour / processing"
+  ]
+ },
+ "f2ece3a56b": {
+  "name": "mosaic.tif",
+  "verdict": "good",
+  "t": "2026-09-27T22:27:11.529Z"
+ },
+ "017d6e2ed7": {
+  "name": "gFwW8V28zQJS_16536x0_lyiq1aB9.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:27:23.611Z",
+  "reasons": [
+   "blurry"
+  ]
+ },
+ "070d756cc7": {
+  "name": "QwYmkLsE52E9_2560x0_esdlMP5Y.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:27:33.609Z"
+ },
+ "0905c98934": {
+  "name": "BwBvDlX4Jnl__16536x0_b9muqi8S-2.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:27:40.892Z",
+  "reasons": [
+   "colour / processing",
+   "noisy",
+   "blurry"
+  ]
+ },
+ "0c27d1df9c": {
+  "name": "l-Qe3b7d-A9p_2560x0_n1wMX-gx.jpg",
+  "reasons": [
+   "over-sharpened"
+  ],
+  "t": "2026-09-27T22:27:47.897Z",
+  "verdict": "borderline"
+ },
+ "0ce3ced6e0": {
+  "name": "iwDTTc3G3_06_2560x0_n1wMX-gx.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:27:54.497Z"
+ },
+ "0fa0263e16": {
+  "name": "cMdnZH0SQ_iS_16536x0_b9muqi8S.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:28:06.843Z"
+ },
+ "10102dfff4": {
+  "name": "7IBG4vfriwpk_2560x0_pms8yI_5.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:28:15.872Z"
+ },
+ "10d984ce00": {
+  "name": "wWpG01l0NWsr_2560x0_n1wMX-gx.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:28:20.222Z",
+  "reasons": [
+   "overexposed"
+  ]
+ },
+ "1538464206": {
+  "name": "ZfUV-LnaoHnC_16536x0_ieTZ0INm.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:28:31.585Z",
+  "reasons": [
+   "noisy",
+   "blurry",
+   "colour / processing"
+  ]
+ },
+ "22b39141e2": {
+  "name": "v4dP2gl4G3os_16536x0_pqB2khud.jpg",
+  "verdict": "reject",
+  "t": "2026-09-27T22:28:38.665Z"
+ },
+ "234e209086": {
+  "name": "7fcMNd_r_aB0_2560x0_rLrsjTFn.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:28:49.008Z",
+  "reasons": [
+   "over-sharpened",
+   "colour / processing",
+   "noisy"
+  ]
+ },
+ "24962b950a": {
+  "name": "iAo7-wkOwYIO_16536x0_ieTZ0INm.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:29:00.251Z",
+  "reasons": [
+   "over-sharpened",
+   "overexposed",
+   "colour / processing"
+  ]
+ },
+ "2565c9054c": {
+  "name": "jG2NTYrFnKx6_16536x0_H9164xRd.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:29:05.831Z",
+  "reasons": [
+   "blurry"
+  ]
+ },
+ "26168e2eff": {
+  "name": "uuvYUtLASZgV_32768x0_R_VA0zbA.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:29:17.315Z",
+  "reasons": [
+   "blurry"
+  ]
+ },
+ "26ea99f391": {
+  "name": "GlZLi4Ijncoh_2560x0_a_C4obZh.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:20.495Z"
+ },
+ "2ad8207d3d": {
+  "name": "b3S8GBKwRcd__2560x0_MBNcCXKL.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:23.457Z"
+ },
+ "2fb4072d55": {
+  "name": "VCQ7EO3CrK31_2560x0_n1wMX-gx.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:26.915Z"
+ },
+ "376e720969": {
+  "name": "8AJxVoKlHVMV_16536x0_ieTZ0INm.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:29:31.782Z",
+  "reasons": [
+   "blurry",
+   "colour / processing",
+   "overexposed"
+  ]
+ },
+ "3936599b92": {
+  "name": "F7zNc3PtPY6m_16536x0_Rr9Vgg-0.jpg",
+  "verdict": "reject",
+  "t": "2026-09-27T22:29:37.609Z"
+ },
+ "3944f2b35b": {
+  "name": "LipYLqMjW-zZ_16536x16536_Ju5VHfwU.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:41.682Z"
+ },
+ "3ba9b56ad9": {
+  "name": "Rr4S3h8j4evR_2560x0_n1wMX-gx.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:43.602Z"
+ },
+ "405322db48": {
+  "name": "83RbzneNeorz_2560x0_JlIuogcT.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:47.825Z"
+ },
+ "5039be1098": {
+  "name": "mCjrHk-0ekzB_2560x0_bIDyhYz1.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:49.295Z"
+ },
+ "53eb2d4f58": {
+  "name": "dUKtmXZ4yjF-_16536x0_b9muqi8S.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:51.852Z"
+ },
+ "5590cf55d5": {
+  "name": "3Dsc6iQhypah_16536x0_1peMYViW.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:53.502Z"
+ },
+ "5709815431": {
+  "name": "dwWwXYIVJzJ-_16536x0_y1p4MwxZ.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:54.710Z"
+ },
+ "5c9055684a": {
+  "name": "GXmVnKOlpMc4_2560x0_YW5shdSz.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:29:55.550Z"
+ },
+ "69aabd2bab": {
+  "name": "7Ras8pbeUEY4_2560x0_n1wMX-gx.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:29:58.888Z",
+  "reasons": [
+   "over-sharpened"
+  ]
+ },
+ "6ad89f19c6": {
+  "name": "O2NuQYGXm3IT_2560x0_n1wMX-gx.png",
+  "verdict": "reject",
+  "t": "2026-09-27T22:30:03.463Z"
+ },
+ "6dc1d1524d": {
+  "name": "-Qy7_9_kdwj1_2560x0_vg9SiHjV.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:07.535Z"
+ },
+ "6fff2e8ac8": {
+  "name": "GxHFR5-JWrQm_16536x0_ieTZ0INm.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:09.320Z"
+ },
+ "7700224fd1": {
+  "name": "5gb9xg_M9BMH_2560x0_oSsWF_c3.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:10.273Z"
+ },
+ "7b2a62287d": {
+  "name": "sTUcsSks1YNk_16536x0_b9muqi8S.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:30:15.433Z",
+  "reasons": [
+   "blurry",
+   "colour / processing"
+  ]
+ },
+ "7de74245e4": {
+  "name": "_D3JdR0jGXGA_2560x0_4e2XODHL.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:18.800Z"
+ },
+ "7e8a1d62e4": {
+  "name": "dMEWy9vgpSYO_16536x0_YW-RBUmf.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:20.428Z"
+ },
+ "800e65b9d0": {
+  "name": "GogaOqZP-nT__2560x0_n1wMX-gx.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:21.658Z"
+ },
+ "8295b3f9ac": {
+  "name": "sVznedLYcXn-_2560x0_FXt984hu.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:23.218Z"
+ },
+ "850e769364": {
+  "name": "O3TClinAPOXH_16536x0_bIQ_33vN.jpg",
+  "verdict": "reject",
+  "t": "2026-09-27T22:30:27.163Z",
+  "reasons": [
+   "blurry"
+  ]
+ },
+ "898d4de9e4": {
+  "name": "s9oS4-4qcagB_16536x0_ieTZ0INm.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:31.985Z"
+ },
+ "8d7b695d68": {
+  "name": "dSCiDse8DVNJ_2560x0_aulWEZoz.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:33.239Z"
+ },
+ "8f59a9299f": {
+  "name": "6H5N1Z1uhZSw_16536x0_UfK0XBCq.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:34.259Z"
+ },
+ "9e19aa8632": {
+  "name": "IZIHrzu_5ghu_16536x0_ieTZ0INm.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:35.398Z"
+ },
+ "a0a225749b": {
+  "name": "gykmyZerOtGH_16536x0_b9muqi8S.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:36.366Z"
+ },
+ "a4a4574447": {
+  "name": "Y_KlIZ4iexF8_16536x0_SezlQRnq.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:37.663Z"
+ },
+ "aaaa0cc00b": {
+  "name": "VZ3EjMZfCIg3_16536x0_b9muqi8S.jpg",
+  "reasons": [
+   "blurry",
+   "noisy",
+   "colour / processing"
+  ],
+  "t": "2026-09-27T22:30:44.592Z",
+  "verdict": "reject"
+ },
+ "ad8ad34d6e": {
+  "name": "2igx-Cbx9ye9_2560x0_n1wMX-gx.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:30:49.582Z"
+ },
+ "aeb85c0b9e": {
+  "name": "LhIbQXMpA4YT_16536x0_b9muqi8S.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:30:52.935Z",
+  "reasons": [
+   "blurry"
+  ]
+ },
+ "b0cfbe760f": {
+  "name": "8A-67jQO2vnd_16536x0_eMrTTKfV.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:31:01.326Z"
+ },
+ "b1d7e71885": {
+  "name": "01RxNurpFrk2_2560x0_5PF4BNz9.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:31:02.505Z"
+ },
+ "b1e5fc16c8": {
+  "name": "Inbaf7Mfcd61_2560x0_n1wMX-gx.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:31:05.054Z",
+  "reasons": [
+   "blurry"
+  ]
+ },
+ "b21d9a253c": {
+  "name": "YoFDX5dn0nqU_16536x0_ieTZ0INm.png",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:31:12.862Z",
+  "reasons": [
+   "blurry",
+   "noisy",
+   "colour / processing"
+  ]
+ },
+ "b21e233ca9": {
+  "name": "91_LdF3PFpWS_16536x0_8yqZyNgD.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:31:15.743Z"
+ },
+ "b60fa353d1": {
+  "name": "fxkunRlVi7r1_16536x0_yxvkBJSc.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:31:23.836Z",
+  "reasons": [
+   "blurry",
+   "colour / processing"
+  ]
+ },
+ "b890fd75e1": {
+  "name": "Gw4GsAz0daIX_16536x0_b9muqi8S.png",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:31:29.191Z",
+  "reasons": [
+   "colour / processing"
+  ]
+ },
+ "baa3ab8f11": {
+  "name": "UJBSkfCO8WwT_16536x0_ieTZ0INm.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:31:36.916Z",
+  "reasons": [
+   "colour / processing",
+   "overexposed"
+  ]
+ },
+ "bef6cf0e0d": {
+  "name": "I9A0IjL91z6c_2560x0_pms8yI_5.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:31:43.051Z"
+ },
+ "bf9fd4b4e4": {
+  "name": "xPX1zPBmL1_7_2560x0_n1wMX-gx.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:31:44.326Z"
+ },
+ "c32fae0177": {
+  "name": "MNkI0ckNede7_2560x0_esdlMP5Y.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:31:45.376Z"
+ },
+ "c74bf4f970": {
+  "name": "H_d2XNR0V9iO_16536x0_QrWRpR9z.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:31:58.065Z",
+  "reasons": [
+   "over-sharpened",
+   "colour / processing"
+  ]
+ },
+ "cf513d04f8": {
+  "name": "2RrFodmgd8jk_2560x0_n1wMX-gx.png",
+  "verdict": "reject",
+  "t": "2026-09-27T22:31:51.488Z",
+  "reasons": [
+   "not the Moon"
+  ]
+ },
+ "d1c92b3157": {
+  "name": "q1fdEG3dpqEx_2560x0_esdlMP5Y.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:03.909Z"
+ },
+ "d67c2f2060": {
+  "name": "V9uFxwamas95_16536x0_ieTZ0INm.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:05.880Z"
+ },
+ "d95e04ef35": {
+  "name": "2tmcb6nFJ35K_32768x0_b9muqi8S.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:07.276Z"
+ },
+ "d9c9049696": {
+  "name": "3aFEW40Vjb0I_2560x0_pljLK9Q-.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:32:11.183Z",
+  "reasons": [
+   "blurry",
+   "colour / processing"
+  ]
+ },
+ "dab34c0ad9": {
+  "name": "rLu2ZvY4Ss09_2560x0_DvpAVyc6.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:15.429Z"
+ },
+ "dbc00a7d37": {
+  "name": "zZvI6Rb3le9y_16536x16536_kWXURFLk.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:17.950Z"
+ },
+ "e42645f758": {
+  "name": "JIGLoFr-EGES_2560x0_n1wMX-gx.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:19.022Z"
+ },
+ "e440864eeb": {
+  "name": "_8DMzHoq_3ah_16536x0_ieTZ0INm.jpg",
+  "verdict": "reject",
+  "t": "2026-09-27T22:32:22.735Z",
+  "reasons": [
+   "blurry"
+  ]
+ },
+ "e66237b02a": {
+  "name": "0sGNqHu0f80l_2560x0_ssYLcbP7.jpg",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:32:28.855Z",
+  "reasons": [
+   "over-sharpened",
+   "colour / processing"
+  ]
+ },
+ "e6ff662332": {
+  "name": "YTaZvVbSTS9m_2560x0_n1wMX-gx.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:34.030Z"
+ },
+ "e77c99a933": {
+  "name": "fzHhw9B7Ueyz_32768x0_b9muqi8S.png",
+  "verdict": "borderline",
+  "t": "2026-09-27T22:32:39.138Z",
+  "reasons": [
+   "blurry",
+   "colour / processing",
+   "noisy"
+  ]
+ },
+ "eb90e95e46": {
+  "name": "N7mNR5EgXMtN_16536x0_SOhxLJ9w.jpg",
+  "verdict": "reject",
+  "t": "2026-09-27T22:32:47.943Z",
+  "reasons": [
+   "overexposed",
+   "blurry",
+   "colour / processing"
+  ]
+ },
+ "f341864cb8": {
+  "name": "hW5QUszTLCgl_2560x0_ArVbpk_o.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:32:50.854Z"
+ },
+ "f6a3f6cc11": {
+  "name": "XmCWhGYuhz4o_16536x0_ieTZ0INm.jpg",
+  "verdict": "reject",
+  "t": "2026-09-27T22:32:58.203Z",
+  "reasons": [
+   "over-sharpened",
+   "noisy",
+   "colour / processing"
+  ]
+ },
+ "f714455e13": {
+  "name": "Wy9sX7euwRti_2560x0_PanQr8C2.jpg",
+  "verdict": "good",
+  "t": "2026-09-27T22:33:01.159Z"
+ },
+ "f85ce72339": {
+  "name": "UE7u2y17eC4B_2560x0_pms8yI_5.png",
+  "verdict": "good",
+  "t": "2026-09-27T22:33:02.884Z"
+ }
+}

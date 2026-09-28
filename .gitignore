@@ -1,0 +1,9 @@
+# downloaded on demand (LROC WAC reference tiles, Google Fonts, IAU gazetteer, LOLA elevation)
+moon_atlas/data/
+
+# per-machine settings: observing site, equipment, tool defaults
+.env
+
+__pycache__/
+*.pyc
+.DS_Store
