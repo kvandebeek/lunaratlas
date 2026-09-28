@@ -39,6 +39,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PKG = os.path.dirname(HERE)
@@ -213,7 +214,9 @@ def projected_features(geo):
 
 
 # ---------------------------------------------------------------- running the CLI
-class TempDir:
+class TempDir(unittest.TestCase):
+    """A test case with its own temporary folder, self.tmp (removed afterwards)."""
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix='moon_atlas_test_')
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -281,7 +284,7 @@ class Viewer:
         for line in self.proc.stdout:
             self.lines.append(line.rstrip())
 
-    def request(self, path, data=None, method=None, raw=False, timeout=30):
+    def request(self, path, data=None, method=None, raw=False, timeout=30) -> tuple[int, Any, dict]:
         body = data if isinstance(data, (bytes, type(None))) else json.dumps(data).encode()
         req = urllib.request.Request(self.url + path, data=body, method=method or ('POST' if body is not None else 'GET'),
                                      headers={'Content-Type': 'application/json'} if body is not None else {})

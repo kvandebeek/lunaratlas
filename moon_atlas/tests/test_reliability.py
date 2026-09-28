@@ -179,6 +179,15 @@ class DamagedSidecars(S.TempDir, unittest.TestCase):
         self.assertIn('image changed since it was located: locating again', out.getvalue())
         self.assertEqual(S.sidecar(self.img)['edits']['shapes'][0]['label'], 'mine')
 
+    def test_damaged_gate_and_quality_entries(self):
+        # a sidecar edited by hand or by another tool: the gate and quality entries are not objects
+        for gate, quality in (('refused', 'bad'), ([1], None), (dict(line=3), 7)):
+            d = S.sidecar(self.img)
+            d['quality_gate'], d['quality'] = gate, quality
+            ag.write_json_atomic(self.side, d)
+            with mock.patch('sys.stdout', new=io.StringIO()):
+                self.assertIsNotNone(ma.geometry(self.img), (gate, quality))
+
     def test_image_moved_away_from_its_sidecar(self):
         # the image was moved or deleted but its .atlas.json stayed: info shows the stale info with a warning,
         # never a FileNotFoundError traceback

@@ -1,0 +1,18 @@
+{
+  "include": ["moon_atlas", "tool_settings.py"],
+  "exclude": ["moon_atlas/data", "**/__pycache__"],
+  "extraPaths": ["moon_atlas", "moon_atlas/tests", "."],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic",
+  "reportOptionalMemberAccess": "none",
+  "reportOptionalSubscript": "none",
+  "reportOptionalIterable": "none",
+  "reportOptionalOperand": "none",
+  "reportPossiblyUnboundVariable": "none",
+  "reportArgumentType": "none",
+  "reportCallIssue": "none",
+  "reportIndexIssue": "none",
+  "reportOperatorIssue": "none",
+  "reportGeneralTypeIssues": "none",
+  "reportIncompatibleMethodOverride": "none"
+}

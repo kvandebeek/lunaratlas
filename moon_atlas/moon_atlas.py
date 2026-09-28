@@ -68,9 +68,9 @@ def geometry(image, relocate=False, force=False, gate=True):
     if geo is not None:
         log(f'positioning from {os.path.basename(sidecar_path(image))}')
         g = d.get('quality_gate')
-        if g:
-            log(g['line'])
-            if gate and not g['ok'] and not force and not g.get('forced'):
+        if isinstance(g, dict):                      # the sidecar is shared: a damaged gate entry is ignored
+            log(g.get('line', ''))
+            if gate and not g.get('ok', True) and not force and not g.get('forced'):
                 raise SystemExit('not annotated: the quality gate refused this image (use --force to annotate anyway)')
         return geo
     if d is not None:
@@ -296,7 +296,8 @@ def cmd_export(a):
     log(f'view: x {x0} y {y0}, {sw} x {sh} px source -> {ow} x {oh} px output (scale {scale:.3f})')
 
     light = light_levels(raw, geo, feats, [(f['x'], f['y']) for f in feats])   # night side, from the whole image
-    if (load_geo(a.image)[1] or {}).get('quality', {}).get('closeup'):
+    quality = (load_geo(a.image)[1] or {}).get('quality')
+    if isinstance(quality, dict) and quality.get('closeup'):
         # a close-up has no sky to compare brightness with: the Sun's elevation from the capture time decides
         light = sun_elevation_light(a.image, feats)
     vw = (x0, y0, (ow / sw, oh / sh), ow, oh)
@@ -304,7 +305,7 @@ def cmd_export(a):
     edits = edits if isinstance(edits, dict) else {}
     style = edits.get('style')
     style_font = style.get('font') if isinstance(style, dict) else None
-    a.font = a.font or (style_font if isinstance(style_font, str) else None) or ts.get('MOON_ATLAS_FONT') or DEFAULT_FONT
+    a.font = str(a.font or (style_font if isinstance(style_font, str) else None) or ts.get('MOON_ATLAS_FONT') or DEFAULT_FONT)
     fonts = Fonts(a.font, log)
     families = {a.font: fonts}
 
