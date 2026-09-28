@@ -193,15 +193,22 @@ def download(url, dest, valid, timeout=60):
 
 
 def write_atomic(path, write):
-    """write(tmp_path) then rename over path, so an interrupted write never leaves a damaged file."""
+    """write(tmp_path) then rename over path, so an interrupted write never leaves a damaged file.
+    A write that cannot happen at all (a read-only folder, a full disk) is a clear message, not a traceback."""
     root, ext = os.path.splitext(path)
     tmp = f'{root}.part{ext}'                    # keeps the extension: cv2.imwrite picks the encoder from it
     try:
-        write(tmp)
-        os.replace(tmp, path)
+        try:
+            write(tmp)
+            os.replace(tmp, path)
+        except OSError as e:
+            raise SystemExit(f'cannot write {path}: {e.strerror or e}') from None
     finally:
         if os.path.exists(tmp):
-            os.remove(tmp)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass                             # a temporary file that cannot be removed is left behind, not fatal
 
 
 class Reference:
@@ -739,7 +746,11 @@ def load_geo(image):
         return None, dict(problem=f'{os.path.basename(p)} is damaged (not a JSON object)')
     if d.get('schema') != SIDECAR_SCHEMA:
         return None, dict(d, problem=f"{os.path.basename(p)} has unsupported schema {d.get('schema')!r}")
-    if d.get('image_signature') != image_signature(image):
+    try:
+        sig = image_signature(image)
+    except OSError:
+        return None, dict(d, problem=f'{os.path.basename(image)} is missing (its sidecar is still here)')
+    if d.get('image_signature') != sig:
         return None, dict(d, problem='image changed since it was located')
     try:
         return Geometry.from_dict(d['geometry']), d

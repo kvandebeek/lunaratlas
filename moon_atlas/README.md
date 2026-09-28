@@ -14,7 +14,8 @@ IAU feature names on your own lunar images, like LROC QuickMap but with your dat
 | `atlas_view.py`, `viewer/` | `view`: the local browser viewer and editor. |
 | `data/` | Downloaded once: IAU list, LROC WAC 643 nm albedo, LOLA elevation (16 and 64 px/deg, `lola/`), fonts. |
 | `experiments/quality/` | Quality survey, labelling page, `calibrate.py`, and `baseline.py` (a regression test, exit 1 on a regression). |
-| `tests/viewer_selftest.js` | Editor self-test (open `/selftest` on a running viewer). |
+| `tests/viewer_selftest.js` | Editor self-test (open `/selftest` on a running viewer; `?group=NAME` runs one journey). |
+| `tests/` | The test suite, stdlib `unittest` and nothing else: `python3 -m unittest discover -s moon_atlas/tests -t moon_atlas/tests`. |
 
 ## Typical use
 

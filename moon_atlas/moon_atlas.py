@@ -142,7 +142,7 @@ def sun_elevation_light(image, feats):
     lat = np.radians([f['lat'] for f in feats]); lon = np.radians([f['lon'] for f in feats])
     p = np.stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)], 1)
     elev = np.degrees(np.arcsin(np.clip(p @ s, -1, 1)))
-    rad = np.degrees(np.array([max(f['diam'], 0.0) for f in feats]) / 2 / R_MOON)
+    rad = np.degrees(np.array([max(f.get('diam') or 0.0, 0.0) for f in feats]) / 2 / R_MOON)
     return (elev + rad > 0.0).astype(float)
 
 
@@ -300,8 +300,11 @@ def cmd_export(a):
         # a close-up has no sky to compare brightness with: the Sun's elevation from the capture time decides
         light = sun_elevation_light(a.image, feats)
     vw = (x0, y0, (ow / sw, oh / sh), ow, oh)
-    edits = (load_geo(a.image)[1] or {}).get('edits') or {}
-    a.font = a.font or (edits.get('style') or {}).get('font') or ts.get('MOON_ATLAS_FONT') or DEFAULT_FONT
+    edits = (load_geo(a.image)[1] or {}).get('edits')
+    edits = edits if isinstance(edits, dict) else {}
+    style = edits.get('style')
+    style_font = style.get('font') if isinstance(style, dict) else None
+    a.font = a.font or (style_font if isinstance(style_font, str) else None) or ts.get('MOON_ATLAS_FONT') or DEFAULT_FONT
     fonts = Fonts(a.font, log)
     families = {a.font: fonts}
 
@@ -315,7 +318,7 @@ def cmd_export(a):
                 families[family] = fonts
         return families[family]
     over_lines, over_labels, reserved = [], [], []
-    if a.drawings and edits.get('shapes'):
+    if a.drawings and isinstance(edits.get('shapes'), list) and edits['shapes']:
         sl, st = shapes_overlay(edits['shapes'], geo, vw, fonts_for, a.font_scale)
         over_lines += sl
         over_labels += st

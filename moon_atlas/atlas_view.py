@@ -25,7 +25,7 @@ import numpy as np
 
 from atlas_geo import R_MOON, image_signature, load_geo, sidecar_path, write_json_atomic
 from atlas_names import load_features
-from atlas_render import FONT_DIR, Fonts, light_levels, rim_polygon
+from atlas_render import FONT_DIR, Fonts, clean_label_override, clean_shape, light_levels, rim_polygon
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, 'viewer')
@@ -57,6 +57,11 @@ def build_tiles(image, raw, log):
         pass
     if os.path.isdir(d):
         shutil.rmtree(d)
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError as e:
+        raise SystemExit(f'cannot write the tile cache {d}: {e.strerror or e} '
+                         '(set HOME to a writable folder, or delete the cache folder)') from None
     g = raw if raw.ndim == 3 else cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
     g = g[..., :3]
     if g.dtype != np.uint8:               # display stretch only (exports keep the original tonality)
@@ -69,7 +74,10 @@ def build_tiles(image, raw, log):
             h, w = g.shape[:2]
             cols, rows = math.ceil(w / TILE), math.ceil(h / TILE)
             ld = os.path.join(d, str(lvl))
-            os.makedirs(ld, exist_ok=True)
+            try:
+                os.makedirs(ld, exist_ok=True)
+            except OSError as e:
+                raise SystemExit(f'cannot write the tile cache {ld}: {e.strerror or e}') from None
             jobs = [(r, c) for r in range(rows) for c in range(cols)]
             list(ex.map(lambda rc: cv2.imwrite(os.path.join(ld, f'{rc[1]}_{rc[0]}.jpg'),
                                                g[rc[0] * TILE:(rc[0] + 1) * TILE, rc[1] * TILE:(rc[1] + 1) * TILE],
@@ -179,27 +187,36 @@ def read_edits(image):
 
 
 def clean_edits(e):
-    """Only the fields the viewer and the export know, with the right types (the sidecar is shared)."""
+    """Only the fields the viewer and the export know, with the right types (the sidecar is shared).
+    Drawings and label overrides that could not be drawn are dropped rather than saved."""
+    e = e if isinstance(e, dict) else {}
     out = dict(schema=EDITS_SCHEMA)
-    out['shapes'] = [s for s in e.get('shapes', []) if isinstance(s, dict) and isinstance(s.get('kind'), str)][:5000]
-    out['hidden'] = sorted({str(n) for n in e.get('hidden', []) if isinstance(n, str)})
-    labs = {}
-    for n, v in (e.get('labels') or {}).items():
-        if isinstance(v, dict):
-            v = {k: v[k] for k in ('dx', 'dy', 'colour', 'size') if k in v and v[k] is not None}
-            if v:
-                labs[str(n)] = v
-    out['labels'] = labs
+    shapes = e.get('shapes') if isinstance(e.get('shapes'), list) else []
+    out['shapes'] = [c for c in map(clean_shape, shapes) if c is not None][:5000]
+    hidden = e.get('hidden') if isinstance(e.get('hidden'), list) else []
+    out['hidden'] = sorted({n for n in hidden if isinstance(n, str)})
+    labs = e.get('labels') if isinstance(e.get('labels'), dict) else {}
+    out['labels'] = {str(n): c for n, v in labs.items() if (c := clean_label_override(v))}
     st = e.get('style') if isinstance(e.get('style'), dict) else {}
     out['style'] = {k: st[k] for k in ('font', 'minPx', 'fs', 'night', 'layers', 'grid', 'rims') if k in st}
+    if not isinstance(out['style'].get('font', ''), str):
+        del out['style']['font']
     return out
 
 
 def write_edits(image, e, lock):
+    """The sidecar with the viewer's edits. A sidecar that has gone or turned to something else is never a
+    traceback: the edits are dropped with a message the page shows, and the geometry is left alone."""
     p = sidecar_path(image)
     with lock:
-        with open(p) as fh:
-            d = json.load(fh)
+        try:
+            with open(p) as fh:
+                d = json.load(fh)
+        except (OSError, ValueError) as ex:
+            raise ValueError(f'cannot read {os.path.basename(p)} ({ex.__class__.__name__}): '
+                             'locate the image again before editing it') from None
+        if not isinstance(d, dict):
+            raise ValueError(f'{os.path.basename(p)} is not a JSON object: locate the image again before editing it')
         d['edits'] = clean_edits(e)
         d['edits']['saved'] = time.strftime('%Y-%m-%d %H:%M:%S')
         write_json_atomic(p, d, indent=1)
@@ -236,6 +253,8 @@ EXT = {'tiff': '.tif', 'png': '.png', 'jpg': '.jpg'}
 
 def export_command(image, o):
     """moon_atlas.py export arguments from the dialog's JSON; every value is validated, nothing reaches a shell."""
+    if not isinstance(o, dict):
+        raise TypeError('expected a JSON object with the export options')
     fmt = o.get('format') if o.get('format') in EXT else 'tiff'
     args = [sys.executable, os.path.join(HERE, 'moon_atlas.py'), 'export', image, '--format', fmt]
     tag = ''
@@ -357,6 +376,8 @@ def serve(image, geo, side, raw, port=8766, open_browser=True, log=print):
                 o = self.body()
             except ValueError:
                 return self.send_error(400)
+            if p in ('/edits', '/export') and not isinstance(o, dict):
+                return self.json(dict(error='expected a JSON object'), 400)
             if p == '/edits':
                 try:
                     return self.json(write_edits(image, o, lock))
@@ -368,7 +389,7 @@ def serve(image, geo, side, raw, port=8766, open_browser=True, log=print):
                     return self.json(dict(error='an export is already running'), 409)
                 try:
                     cmd, out = export_command(image, o)
-                except (TypeError, ValueError) as e:
+                except (TypeError, ValueError, OverflowError) as e:
                     return self.json(dict(error=f'bad export options: {e}'), 400)
                 jobs['current'] = ExportJob(cmd, out)
                 log('export: ' + ' '.join(cmd[2:]))

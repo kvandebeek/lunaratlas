@@ -217,8 +217,8 @@ def layout(feats, geo, view, fonts, min_px=24, font_scale=1.0, rims=True, letter
     Returns a list of label dicts in output px, drawn in order."""
     x0, y0, scale, W, H = view
     to_out, scale = view_mapper(view)
-    overrides = overrides or {}
-    hidden = set(hidden)
+    overrides = overrides if isinstance(overrides, dict) else {}         # the sidecar is shared: types are checked
+    hidden = {n for n in hidden if isinstance(n, str)} if isinstance(hidden, (list, tuple, set)) else set()
 
     C = STYLE['colours']
     R = geo.radius_px * scale
@@ -237,7 +237,7 @@ def layout(feats, geo, view, fonts, min_px=24, font_scale=1.0, rims=True, letter
             continue
         if f['z'] < 0.1 or f['name'] in hidden:
             continue
-        ov = overrides.get(f['name']) or {}
+        ov = clean_label_override(overrides.get(f['name'])) or {}
         X, Y = to_out(f['x'], f['y'])
         if not (-200 <= X < W + 200 and -200 <= Y < H + 200):
             continue
@@ -491,15 +491,95 @@ def fmt_km(km):
     return f'{km:.0f} km' if km >= 100 else f'{km:.1f} km' if km >= 10 else f'{km:.2f} km'
 
 
+SHAPE_GEOMETRY = dict(circle=('cx', 'cy', 'r'), ellipse=('x0', 'y0', 'x1', 'y1'), rect=('x0', 'y0', 'x1', 'y1'),
+                      arrow=('x0', 'y0', 'x1', 'y1'), text=('x', 'y'), outline=(), measure=())
+
+
+def _num(v):
+    """A finite JSON number, else None (bools are not numbers here)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    v = float(v)
+    return v if math.isfinite(v) else None
+
+
+def _point(p):
+    """{x, y} -> dict, or None."""
+    if not isinstance(p, dict):
+        return None
+    x, y = _num(p.get('x')), _num(p.get('y'))
+    return None if x is None or y is None else dict(x=x, y=y)
+
+
+def clean_shape(s):
+    """One of the viewer's drawings with only the fields it and the export know, correctly typed, or None when it
+    cannot be drawn (unknown kind, missing or non-finite geometry). Used when saving and again when exporting."""
+    if not isinstance(s, dict) or s.get('kind') not in SHAPE_GEOMETRY:
+        return None
+    kind = s['kind']
+    out = dict(kind=kind)
+    for k in SHAPE_GEOMETRY[kind]:
+        out[k] = _num(s.get(k))
+        if out[k] is None:
+            return None
+    if kind == 'circle' and out['r'] < 0:
+        return None
+    if kind == 'outline':
+        pts = s.get('pts')
+        if not isinstance(pts, list) or len(pts) < 2:
+            return None
+        clean = []
+        for p in pts[:10000]:
+            if not isinstance(p, list) or len(p) != 2 or None in (xy := [_num(v) for v in p]):
+                return None
+            clean.append(xy)
+        out['pts'] = clean
+        if s.get('closed'):
+            out['closed'] = True
+    if kind == 'measure':
+        out['a'], out['b'] = _point(s.get('a')), _point(s.get('b'))
+        if out['a'] is None or out['b'] is None:
+            return None
+    if isinstance(s.get('colour'), str):
+        out['colour'] = s['colour'][:32]
+    if (size := _num(s.get('size'))) is not None:
+        out['size'] = min(3.0, max(0.5, size))
+    if isinstance(s.get('label'), str):
+        out['label'] = s['label'][:500]
+    if isinstance(s.get('font'), str) and s['font']:
+        out['font'] = s['font'][:100]
+    if s.get('dash'):
+        out['dash'] = True
+    return out
+
+
+def clean_label_override(v):
+    """A name's placement / style override from the viewer ({dx, dy, colour, size}), correctly typed, or None."""
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    dx, dy = _num(v.get('dx')), _num(v.get('dy'))
+    if dx is not None and dy is not None:
+        out['dx'], out['dy'] = dx, dy
+    if isinstance(v.get('colour'), str) and v['colour']:
+        out['colour'] = v['colour'][:32]
+    if (size := _num(v.get('size'))) is not None:
+        out['size'] = min(3.0, max(0.5, size))
+    return out or None
+
+
 def shapes_overlay(shapes, geo, view, fonts_for, font_scale=1.0):
     """The viewer's drawings (image px, as saved in the sidecar's edits) in output px. fonts_for(family) -> Fonts.
     Kinds: circle, ellipse, rect, outline, arrow, text, measure. Returns (lines, labels)."""
     to_out, scale = view_mapper(view)
     lines, labels = [], []
-    for s in shapes or ():
-        kind = s.get('kind')
+    for s in shapes if isinstance(shapes, list) else ():
+        s = clean_shape(s)
+        if s is None:
+            continue                                     # a damaged or unknown shape in the sidecar is skipped
+        kind = s['kind']
         col = hex_rgba(s.get('colour'), 255)
-        size = float(s.get('size') or 1)
+        size = s.get('size', 1.0)
         width = max(1.0, 1.6 * size * font_scale)
         dash = (7 * font_scale, 5 * font_scale) if s.get('dash') else None
         pts = None
@@ -552,8 +632,10 @@ def shapes_overlay(shapes, geo, view, fonts_for, font_scale=1.0):
             elif kind == 'arrow':
                 ax, ay = to_out(s['x0'], s['y0'])
                 ay += 14 * font_scale
-            else:
+            elif pts is not None:
                 ax, ay = pts[:, 0].mean(), pts[:, 1].max() + 14 * font_scale
+            else:
+                continue
             labels.append(text_label(fonts_for(s.get('font')), s['label'], float(ax), float(ay),
                                      max(8, int(round(15 * size * font_scale))), col, weight=500 if kind == 'text' else 520))
     return lines, labels
