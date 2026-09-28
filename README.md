@@ -20,7 +20,10 @@ close-up search, the viewer and every export option.
 
 ## Requirements
 
-macOS or Linux, Python 3.14 with numpy, OpenCV and Pillow. Reference data (IAU gazetteer, LROC WAC
+macOS, Linux or Windows. Python 3.14 with numpy, OpenCV and Pillow. Developed and measured on macOS
+(Apple silicon); Linux and Windows should work but are untested, so do tell me if they don't.
+
+Reference data (IAU gazetteer, LROC WAC
 albedo, LOLA elevation, fonts) is downloaded once on first use into `moon_atlas/data/`.
 
 ## Settings

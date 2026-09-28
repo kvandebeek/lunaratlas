@@ -273,6 +273,19 @@ def export_command(image, o):
 
 
 # ---------------------------------------------------------------- server
+def reveal(path):
+    """Show a finished file in the desktop file manager: Finder, Explorer or whatever xdg-open picks."""
+    try:
+        if sys.platform == 'darwin':
+            subprocess.Popen(['open', '-R', path])
+        elif sys.platform == 'win32':
+            subprocess.Popen(['explorer', '/select,' + os.path.normpath(path)])
+        else:
+            subprocess.Popen(['xdg-open', os.path.dirname(os.path.abspath(path))])
+    except OSError:
+        pass                                  # no file manager (a headless box): the export still succeeded
+
+
 def serve(image, geo, side, raw, port=8766, open_browser=True, log=print):
     levels = build_tiles(image, raw, log)
     data = page_data(image, raw, geo, side, levels, log)
@@ -363,7 +376,7 @@ def serve(image, geo, side, raw, port=8766, open_browser=True, log=print):
             if p == '/reveal':
                 job = jobs.get('current')
                 if job and job.state == 'done':
-                    subprocess.Popen(['open', '-R', job.output])
+                    reveal(job.output)
                 return self.json(dict(ok=True))
             self.send_error(404)
 

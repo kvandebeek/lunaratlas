@@ -1,6 +1,6 @@
 # moon_atlas
 
-IAU feature names on your own lunar images, like LROC QuickMap but with your data. It works on full disks, any phase, mosaics and close-ups without a limb. It finds the image's position, orientation, mirroring and libration automatically, refuses images that are too poor to annotate, and exports labelled images at 1:1 or smaller (never upscaled). It uses the Homebrew Python's numpy, OpenCV and Pillow, like the mosaic tools.
+IAU feature names on your own lunar images, like LROC QuickMap but with your data. It works on full disks, any phase, mosaics and close-ups without a limb. It finds the image's position, orientation, mirroring and libration automatically, refuses images that are too poor to annotate, and exports labelled images at 1:1 or smaller (never upscaled). It needs Python 3.14 with numpy, OpenCV and Pillow, like the mosaic tools, on macOS, Linux or Windows.
 
 | File | What it does |
 |---|---|
@@ -92,7 +92,8 @@ A local server on 127.0.0.1 opens the page in the browser.
 - **Editing:** drag drawings and their square handles; drag a name to move it, and recolour or resize it in its card; undo and redo with ⌘Z and ⇧⌘Z.
 - **Fonts:** Roboto, Inter, IBM Plex Sans, Barlow, Geist and Space Grotesk, served locally.
 - **Saving:** edits are stored in `IMAGE.atlas.json` under `edits`.
-- **Export:** the Export button runs the real export, with progress and "Show in Finder".
+- **Export:** the Export button runs the real export, with progress and a button that shows the result in
+  the desktop file manager (Finder, Explorer, or whatever `xdg-open` picks).
 
 ## How positioning works (full disks)
 
