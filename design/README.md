@@ -58,12 +58,11 @@ three are bundled with the app, so nothing is downloaded.
 
 ## Open questions for design
 
-- **Names outside a close-up photo.** Names of features just beyond the photo's edge are drawn on the navy
-  background around it (see 11 and 16). This is the viewer's existing behaviour; clipping them to the photo is a
-  one-line change.
-- **Viewer and export differ in label density.** The viewer now avoids collisions more strictly (descenders and shadows
-  count) and fades names in. The export keeps its own layout (`atlas_render.py`), so an export can hold a few names the
-  viewer hides.
+- **Names outside a close-up photo.** *Decided:* names are clipped at the photo's edge, as in an export, instead of
+  being drawn on the navy background around it.
+- **Viewer and export label density.** *Decided:* the export's layout uses the viewer's room around a name (padding for
+  descenders and the shade, the same 4 px grid), so both hide the same crowded names. The viewer still fades names in,
+  which an export has no use for, and it keeps clear of its own panels.
 - **Several names picked (Alt/⌥)** are shown as a dashed amber outline, a single selection as a solid one. The old
   separate coral colour is gone.
 - **"System UI" font** is not offered: the export renders names with bundled font files and cannot use it.

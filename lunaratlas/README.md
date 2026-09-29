@@ -4,7 +4,7 @@ IAU feature names on your own lunar images, like LROC QuickMap but with your dat
 
 | File | What it does |
 |---|---|
-| `lunaratlas.py` | The CLI: `locate`, `export`, `info`, `find`, `view`, `app`. |
+| `lunaratlas.py` | The CLI: `locate`, `export`, `batch`, `info`, `find`, `view`, `app`. |
 | `atlas_geo.py` | Positioning of full disks: limb fit, orientation candidates verified by terrain matching, perspective sphere model with a smooth correction, and sidecar I/O. |
 | `atlas_closeup.py` | Close-ups without a limb: optics, the lit LOLA relief reference, and the blind search. |
 | `atlas_ephem.py` | Ephemeris (Meeus) from the SharpCap UTC time: libration, subsolar point, Earth–Moon distance. |
@@ -28,7 +28,10 @@ python3 $A info mosaic_finished.tif
 python3 $A view mosaic_finished.tif            # browser viewer and editor
 python3 $A export mosaic_finished.tif --max-size 2400 -o overview.jpg
 python3 $A export mosaic_finished.tif --around Copernicus --size 3600x2400
-python3 $A find mosaic_finished.tif "Rupes Recta"
+python3 $A export mosaic_finished.tif --north-up -o north_up.tif        # north up, east right, never mirrored
+python3 $A export mosaic_finished.tif --around Copernicus --fit         # the view sized from the crater's own diameter
+python3 $A find mosaic_finished.tif "Rupes Recta" Tycho --csv           # several names, as data (or --json)
+python3 $A batch ~/Pictures/session --max-size 2400                     # every photo of a folder, then a table
 python3 $A app                                 # no terminal needed after this: pick photos in the browser
 ```
 
@@ -50,14 +53,17 @@ The limits were calibrated on 80 labelled images (`calibrate.py`). They refuse e
 
 The observing site (used for the parallax, up to 1° of libration) and the equipment are settings; see "Settings" below.
 
-A close-up needs its capture time, taken from the SharpCap name `YYYY-MM-DD-HHMM_T-…` in UTC. For a mosaic, the middle of its panels' times from `mosaic_layout.json` is used. From the time, the ephemeris gives the lighting and the libration. The optics are asked once per folder when a terminal is attached, and stored in `lunaratlas_optics.json`. Otherwise all 12 setups of the 250 PDS are tried: native, 2× ES, 2.5× TV Powermate or 3× ES, with the IMX678, IMX533 or IMX462. The setup that fits is then recognised and saved for the folder.
+A close-up needs its capture time, taken from the SharpCap name `YYYY-MM-DD-HHMM_T-…` in UTC. A file that has been renamed can be given its time with `--time YYYY-MM-DDTHH:MM` (UTC) on `locate` (or on `export`, `view` and `find`, which locate a photo that has no positioning yet): the time is kept in the sidecar and used by every later step, the name's own time still comes first. For a mosaic, the middle of its panels' times from `mosaic_layout.json` is used. From the time, the ephemeris gives the lighting and the libration. The optics are asked once per folder when a terminal is attached, and stored in `lunaratlas_optics.json`. Otherwise all 12 setups of the 250 PDS are tried: native, 2× ES, 2.5× TV Powermate or 3× ES, with the IMX678, IMX533 or IMX462. The setup that fits is then recognised and saved for the folder.
 
-The search works in three steps:
-1. The image is reduced to 2.4 km/px and turned in 4° steps, mirrored and not.
-2. Each view is correlated against LOLA relief of the whole Earth-facing hemisphere, lit by the real Sun and multiplied by the albedo.
-3. The best places are verified by terrain matching, and the winner is fitted with the libration held.
+The search works in four steps:
+1. The image is reduced to 4.8 km/px and turned in 4° steps, mirrored and not.
+2. Each view is correlated against LOLA relief of the whole Earth-facing hemisphere, lit by the real Sun and multiplied by the albedo, at the same coarse scale (a quarter of the pixels). The 30 best distinct places are kept.
+3. Each of those is searched again at 2.4 km/px, in a window around where it was found, at every 1° within ±4° of its angle. The correlation is sharp in angle, so this also finds the angle better than the 4° steps of a full search at 2.4 km/px (still available as `blind_search_full`).
+4. The best places are verified by terrain matching, and the winner is fitted with the libration held.
 
-Measured on 5 of the user's close-ups and one close-up mosaic: all found correctly, in 20–100 s.
+Compared with the full search on synthetic close-ups, it finds the same place and is 2–3 times faster overall (28 s to 15 s with known optics, 97 s to 38 s with all 12 setups tried).
+
+Measured on 5 of the user's close-ups and one close-up mosaic: all found correctly, in 20–100 s (before the coarse-to-fine search; see below for the speed-up).
 
 ## Settings
 
@@ -73,7 +79,30 @@ Command-line options override `.env`; environment variables of the same name ove
 --min-size PX (24)       --font FAMILY               --font-scale F    --night hide|dim|show
 --layers area,crater,lettered,relief,landing|none    --no-rims  --no-lettered  --no-landing
 --no-grid  --no-drawings  --no-info                  --quality Q (JPEG)  --force
+--north-up               --around NAME --fit         --time YYYY-MM-DDTHH:MM (UTC, if it must be located)
 ```
+
+`--north-up` turns the picture (and the drawings and moved names with it) so lunar north is up and east is right, never mirrored. Turning by other than a right angle makes the canvas larger; its corners are black. It works on the whole picture or with `--around`; `--region` counts pixels of the picture as it was taken and is refused with it. The viewer's export dialog has the same choice.
+
+`--fit` with `--around` sizes the view from the feature's diameter in the gazetteer (2.2 times it, at least 600 px); `--size` then gives only the shape. A feature without a diameter (a landing site) uses `--size` as it is.
+
+Files are written through a temporary file: an export that is stopped never leaves a half-written picture.
+
+### Several photos: `batch`
+
+```sh
+python3 lunaratlas.py batch FOLDER [-r] [--skip-existing] [--locate-only] [any export option]
+```
+
+Locates (when needed) and exports every TIFF, PNG and JPEG in the folder in name order (`-r`: the sub-folders too), skipping hidden files and earlier exports (`IMAGE_atlas….ext`). One photo that cannot be done (damaged, refused by the quality gate, no limb and no time) is reported and the rest carry on; a table at the end lists each photo's result, and the exit status is 1 if any failed. `--skip-existing` leaves alone photos whose export is already there and not older. Each photo uses its own viewer edits.
+
+### Finding features: `find`
+
+`find IMAGE NAME [NAME …]` answers for each name: the exact name first, else names that start with what you typed (the others that fit are listed: `Copernicus` also lists `Copernicus A`, `B`, …), and a misspelt name gets suggestions. `--json` or `--csv` print the answers as data (progress messages go to stderr then); the exit status is 1 if any name was not found.
+
+### The sky at the capture time
+
+With a capture time (name or `--time`), `info` prints the phase (`first quarter, 51 % of the disk lit`), the phase angle, where the Sun is overhead, the colongitude and the Earth–Moon distance. The export's info block and the viewer's top bar show the phase too (the viewer's tooltip has the Sun and colongitude). They use the observing site of your settings for the parallax.
 
 Exports include:
 - the names, in one colour, with maria in larger spaced capitals, IBM Plex Sans and a soft shadow;
@@ -90,7 +119,7 @@ On close-ups, night-side names are hidden by the Sun's elevation at the capture 
 A local server on 127.0.0.1 opens the page in the browser.
 - **Tiles** are cached in `~/Library/Caches/LunarAtlas` (Windows `%LOCALAPPDATA%\LunarAtlas\Cache`, Linux
   `~/.cache/lunaratlas`) and rebuilt when the image changes.
-- **Only this machine:** requests with a foreign `Host` (DNS rebinding) or another site's `Origin` are refused.
+- **Only this machine, and only its own page:** requests with a foreign `Host` (DNS rebinding), another site's `Origin` or `Sec-Fetch-Site` (a script or image include, a frame), or without this run's token are refused; only GET and POST are answered. The token is made at every start; the address the browser is sent to carries it once and it is then kept in an HttpOnly, SameSite=Strict cookie (`lunaratlas.py view --no-open` prints that address, `--open` sends the browser to it and prints none). `LUNARATLAS_TOKEN` sets a token instead (for scripts and tests). Pages get a strict Content-Security-Policy (no inline script, no framing), the page data is JSON that the page fetches (`/data.json`; it does not name your account), and request bodies, uploads and drawings have size limits.
 - **Names** appear by zoom level: craters from 24 px across, one label colour. Crater outlines show for the selected crater only; a switch shows them all.
 - **Search and info:** search, an info card, and a lat/lon grid (G).
 - **Measuring:** km along the great circle.
@@ -120,7 +149,7 @@ image", goes back.
   own (WebKit on macOS, Edge WebView2 on Windows) and closing it stops the launcher, including a locate or export
   that is still running. Without it (or with `--no-window`) the browser is used; `--idle-exit SECONDS` then stops the
   launcher that long after its last page was closed (the pages ping it every 20 s).
-- **One at a time:** a second start brings the running window forward (or opens a browser page on it).
+- **One at a time:** a second start brings the running window forward (or opens a browser page on it). It finds the first one through a file only you can read (`running.json` in the data folder) and checks, with a proof that needs the token, that what answers on the port is that launcher.
   "Quit LunarAtlas" on the page stops it.
 
 The packaged app (see [`packaging/`](../packaging/README.md)) is this launcher with Python and the libraries built in.
@@ -143,7 +172,7 @@ Measured on 2026-09-28, with the lit-relief reference, using `experiments/qualit
 
 ## Limits
 
-- Close-ups need a capture time; a renamed file without one cannot be searched yet.
+- Close-ups need a capture time, from the name or from `--time`.
 - Very thin crescents downloaded without a timestamp often cannot be located: 28 of 78 of that test set locate. The rest are close-ups without a time and thin crescents.
 - The correction field is fitted on the sunlit side and extrapolates onto the night side (up to about 4 px); night-side names are hidden by default.
 
