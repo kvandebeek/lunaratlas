@@ -1,4 +1,4 @@
-/* LunarAtlas viewer and editor. Data: window.ATLAS (/data.js); edits live in IMAGE.atlas.json (GET/POST /edits). */
+/* LunarAtlas viewer and editor. Data: window.ATLAS (/data.json, fetched by boot.js); edits live in IMAGE.atlas.json (GET/POST /edits). */
 (() => {
   'use strict';
   const A = window.ATLAS;
@@ -114,6 +114,7 @@
   for (const f of FE) { const l = LAYER[f.c]; count[l] = (count[l] || 0) + 1; }
   for (const k of LAYERS5) $('#n-' + k).textContent = count[k] || 0;
   $('#fileName').textContent = A.image;
+  if (A.sky) { const sky = $('#skyLine'); sky.textContent = A.sky.split(' · ')[0]; sky.title = A.sky; }     // phase, Sun, colongitude at the capture time
   $('#q').placeholder = `Search ${FE.length} names`;
 
   // ------------------------------------------------------------ tiles
@@ -469,7 +470,10 @@
     ctx.fillStyle = C.bg0; ctx.fillRect(0, 0, VW, VH);
     drawTiles();
     drawGrid();
+    const [ix0, iy0] = scr(-0.5, -0.5), [ix1, iy1] = scr(A.width - 0.5, A.height - 0.5);
+    ctx.save(); ctx.beginPath(); ctx.rect(ix0, iy0, ix1 - ix0, iy1 - iy0); ctx.clip();      // names stop at the photo's edge, as in an export
     drawLabels();
+    ctx.restore();
     drawGridLabels();
     if (selected) {
       const f = selected;
@@ -1019,6 +1023,7 @@
         <label><input type="checkbox" id="xGrid" checked> Lat/lon grid</label>
         <label><input type="checkbox" id="xMine" checked> My drawings and measurements (${E.shapes.length})</label>
         <label><input type="checkbox" id="xInfo" checked> Info block (date, scale bar, north)</label>
+        <label><input type="checkbox" id="xNorth"> North up, east right <small>(turns the picture; not with the current view)</small></label>
       </div></fieldset>
       <div class="outsize"><span>Output</span><b id="outSize"></b></div>
       <div class="progress" id="xProg" hidden><div class="bar"><div></div></div><pre id="xLog"></pre></div>
@@ -1026,15 +1031,19 @@
     </div>`;
     el.hidden = false;
     const opts = () => {
+      const north = $('#xNorth').checked, viewRadio = el.querySelector('[name=reg][value=view]');
+      viewRadio.disabled = north;                  // the view's box counts pixels of the picture as it was taken
+      if (north && viewRadio.checked) el.querySelector('[name=reg][value=all]').checked = true;
       const reg = el.querySelector('[name=reg]:checked').value, sc = el.querySelector('[name=sc]:checked').value, fmt = el.querySelector('[name=fmt]:checked').value;
       let w = A.width, h = A.height;
       const o = { format: fmt, scale: sc === '1' ? null : sc, max_size: +$('#maxSide').value || 4096, names: $('#xNames').checked,
                   layers: LAYERS5.filter(shown), rims: $('#xRims').checked, grid: $('#xGrid').checked,
                   drawings: $('#xMine').checked, info: $('#xInfo').checked, night: set.night, min_px: set.minPx, font_scale: set.fs, font: set.font };
+      if (north) o.north_up = true;
       if (reg === 'view') { w = vr[2] - vr[0]; h = vr[3] - vr[1]; o.region = 'view'; o.box = [vr[0], vr[1], w, h]; }
       if (reg === 'feature' && selected) { w = Math.min(A.width, Math.max(600, Math.round(selected.dpx * 3))); h = Math.round(w * 2 / 3); o.region = 'feature'; o.name = selected.n; o.size = [w, h]; }
       const s = sc === 'half' ? 0.5 : sc === 'max' ? Math.min(1, o.max_size / Math.max(w, h)) : 1;
-      $('#outSize').textContent = `${Math.round(w * s)} × ${Math.round(h * s)} px · ${fmt === 'jpg' ? 'JPEG' : '16-bit ' + fmt.toUpperCase()}`;
+      $('#outSize').textContent = `${Math.round(w * s)} × ${Math.round(h * s)} px · ${fmt === 'jpg' ? 'JPEG' : '16-bit ' + fmt.toUpperCase()}${north ? ' · turned: the canvas grows to hold it' : ''}`;
       const box = reg === 'view' ? vr.slice() : reg === 'feature' && selected
         ? [selected.x - w / 2, selected.y - h / 2, selected.x + w / 2, selected.y + h / 2] : [0, 0, A.width, A.height];
       schedulePreview(box, s, o);

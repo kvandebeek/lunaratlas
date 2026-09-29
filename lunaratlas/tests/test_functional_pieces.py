@@ -193,7 +193,7 @@ class ExportOptions(S.TempDir, unittest.TestCase):
 
     def test_a_named_feature_becomes_an_around(self):
         a = self.args(region='feature', name='Tycho', size=[500, 400])
-        self.assertEqual(a[a.index('--around') + 1], 'Tycho')
+        self.assertIn('--around=Tycho', a)
         self.assertEqual(a[a.index('--size') + 1], '500x400')
         self.assertTrue(self.out(region='feature', name='Tycho').endswith('_atlas_Tycho.tif'))
 
@@ -271,8 +271,8 @@ class ExportOptions(S.TempDir, unittest.TestCase):
     def test_no_value_is_ever_put_in_a_shell(self):
         args, out = av.export_command(self.IMG, dict(region='feature', name='a; rm -rf ~ $(whoami)'))
         self.assertIsInstance(args, list, 'the command is a list of arguments, never a string for a shell')
-        self.assertIn('a; rm -rf ~ $(whoami)', args, 'the name stays one argument, exactly as typed')
-        self.assertEqual(args.count('a; rm -rf ~ $(whoami)'), 1, 'and it is one argument, not several')
+        self.assertIn('--around=a; rm -rf ~ $(whoami)', args, 'the name stays one argument, exactly as typed, tied to its option')
+        self.assertEqual(sum('rm -rf' in a for a in args), 1, 'and it is one argument, not several')
         self.assertNotIn(';', out, 'the output name has the punctuation taken out')
         self.assertTrue(out.endswith('_atlas_a_rm_-rf_whoami.tif'), out)
 

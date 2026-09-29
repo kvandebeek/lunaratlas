@@ -180,7 +180,7 @@ class SamePhotoAgain(S.TempDir):
 
     def upload(self, data, name='moon.tif'):
         c = http.client.HTTPConnection('127.0.0.1', self.srv.server_port, timeout=30)
-        c.request('POST', f'/app/upload?name={name}&time=', data, {'Host': 'localhost'})
+        c.request('POST', f'/app/upload?name={name}&time=', data, {'Host': 'localhost', 'X-LA-Token': self.srv.token})
         r = json.loads(c.getresponse().read())
         c.close()
         with open(r['path'], 'rb') as fh:
@@ -228,7 +228,7 @@ class Launcher(S.TempDir):
 
     def call(self, method, path, body=b'', headers=None):
         c = http.client.HTTPConnection('127.0.0.1', self.srv.server_port, timeout=60)
-        c.request(method, path, body, dict({'Host': 'localhost'}, **(headers or {})))
+        c.request(method, path, body, dict({'Host': 'localhost', 'X-LA-Token': self.srv.token}, **(headers or {})))
         r = c.getresponse()
         data = r.read()
         c.close()
@@ -252,7 +252,8 @@ class Launcher(S.TempDir):
 
     def test_from_upload_to_the_viewer(self):
         self.assertEqual(self.call('GET', '/')[0], 200)                         # the launcher page, no image yet
-        self.assertTrue(already_running(self.srv.server_port))
+        self.assertTrue(already_running(self.srv.server_port, self.srv.token))
+        self.assertFalse(already_running(self.srv.server_port, 'not-the-token'), 'a different token is a different app')
         code, r = self.upload('moon.tif', '2026-09-20T21:30')
         self.assertEqual(code, 200, r)
         self.assertEqual(os.path.basename(r['path']), '2026-09-20-2130_0-moon.tif')
@@ -261,8 +262,9 @@ class Launcher(S.TempDir):
         st = self.wait()
         self.assertEqual(st['phase'], 'ready', st)
         self.assertTrue(any('capture time' in l for l in st['lines']), 'the time from the page lit the relief')
-        self.assertEqual(self.call('GET', '/data.js')[0], 200)                  # the viewer now serves the image
+        self.assertEqual(self.call('GET', '/data.json')[0], 200)                  # the viewer now serves the image
         self.assertIn(b'Other image', self.call('GET', '/')[1])
+        self.assertTrue(self.call('GET', '/data.json')[1]['launcher'], 'the viewer page has the way back')
         again = self.upload('moon.tif', '2026-09-20T21:30')[1]                   # the same photo: nothing to redo
         self.assertEqual(again['path'], r['path'])
         self.assertTrue(again['located'])

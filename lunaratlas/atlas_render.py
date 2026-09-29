@@ -4,17 +4,17 @@ import math
 import os
 import re
 import urllib.error
-import urllib.request
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from atlas_geo import DATA, R_MOON, download, resize
+from atlas_geo import DATA, R_MOON, download, https_open, resize
 from atlas_paths import FONTS as BUNDLED_FONTS
 
 FONT_DIR = os.path.join(DATA, 'fonts')
 DEFAULT_FONT = 'IBM Plex Sans'
+GOOGLE_FONTS_RAW = 'https://raw.githubusercontent.com/google/fonts/'      # where a listed font file may come from
 BUNDLED = ('IBM Plex Sans', 'Source Sans 3', 'Roboto')           # in lunaratlas/fonts: offline, the viewer's choices
 
 LABEL_RGB = (255, 244, 226)                          # one colour for every name (chosen 2026-09-27); maria differ by size
@@ -39,9 +39,11 @@ class Fonts:
     (github.com/google/fonts) if needed.
     Handles variable fonts (weight/width/optical-size axes) and static families."""
 
-    def __init__(self, family=DEFAULT_FONT, log=print):
+    def __init__(self, family=DEFAULT_FONT, log=print, download=True):
+        """download=False: only the bundled and the already downloaded families (a name that came from someone else's
+        sidecar must not start a download)."""
         self.family = family
-        self.files = self._ensure(family, log)
+        self.files = self._ensure(family, log, download)
         self.cache = {}
 
     @staticmethod
@@ -56,7 +58,7 @@ class Fonts:
         except OSError:
             return False
 
-    def _ensure(self, family, log):
+    def _ensure(self, family, log, may_download=True):
         b = os.path.join(BUNDLED_FONTS, self._slug(family))
         if os.path.isdir(b):
             files = sorted(f for f in os.listdir(b) if f.lower().endswith(('.ttf', '.otf')) and self._font_ok(os.path.join(b, f)))
@@ -78,11 +80,13 @@ class Fonts:
             for f in legacy:
                 os.replace(os.path.join(FONT_DIR, f), os.path.join(d, f))
             files = legacy
+        if not files and not may_download:
+            raise SystemExit(f'font "{family}" is not here, and a name from a sidecar is not downloaded')
         if not files:
             listing, err = None, None
             for lic in ('ofl', 'apache', 'ufl'):
                 try:
-                    with urllib.request.urlopen(f'https://api.github.com/repos/google/fonts/contents/{lic}/{self._slug(family)}', timeout=30) as r:
+                    with https_open(f'https://api.github.com/repos/google/fonts/contents/{lic}/{self._slug(family)}', 30) as r:
                         listing = json.load(r); break
                 except urllib.error.HTTPError as e:
                     if e.code != 404:                              # e.g. 403 rate limit
@@ -95,15 +99,23 @@ class Fonts:
             elif not listing:
                 raise SystemExit(f'cannot reach Google Fonts for "{family}": {err}' if err else
                                  f'font "{family}" not found on Google Fonts')
-            want = [e for e in listing if e['name'].lower().endswith('.ttf')]
+            want = self._listed(listing)
             if want:
                 log(f'downloading font {family} ({len(want)} files, once)')
                 open(pending, 'w').close()
                 for e in want:
-                    download(e['download_url'], os.path.join(d, e['name']), self._font_ok)
+                    download(e['download_url'], os.path.join(d, e['name']), self._font_ok, max_bytes=30_000_000)
                 os.remove(pending)
                 files = [e['name'] for e in want]
         return self._describe(d, files)
+
+    @staticmethod
+    def _listed(listing):
+        """The .ttf files of a GitHub contents listing that may be fetched: a plain file name (no folders) whose
+        download_url is on raw.githubusercontent.com/google/fonts."""
+        return [e for e in listing if isinstance(e, dict) and isinstance(e.get('name'), str) and e['name'].lower().endswith('.ttf')
+                and re.fullmatch(r'\w[\w .()\[\],-]{0,127}\.ttf', e['name'], re.I)
+                and str(e.get('download_url')).startswith(GOOGLE_FONTS_RAW)]
 
     @staticmethod
     def _describe(d, files):
@@ -237,7 +249,7 @@ def layout(feats, geo, view, fonts, min_px=24, font_scale=1.0, rims=True, letter
     C = STYLE['colours']
     R = geo.radius_px * scale
     cx, cy = to_out(geo.t[0], geo.t[1])
-    cell = 3
+    cell = 4                                             # as the viewer's layout (viewer.js layout()): same grid, same room
     occ = np.zeros((H // cell + 2, W // cell + 2), bool)
     for bx0, by0, bx1, by1 in reserved:
         occ[max(0, int(by0 // cell)):max(0, int(by1 // cell) + 1), max(0, int(bx0 // cell)):max(0, int(bx1 // cell) + 1)] = True
@@ -304,7 +316,8 @@ def layout(feats, geo, view, fonts, min_px=24, font_scale=1.0, rims=True, letter
         if moved:                                        # the user's placement: first spot + their offset, no search
             spots = [(spots[0][0] + float(ov['dx']) * scale, spots[0][1] + float(ov['dy']) * scale)]
         for sx, sy in spots:
-            bx0, by0, bx1, by1 = sx - tw / 2 - 4, sy - th / 2 - 4, sx + tw / 2 + 4, sy + th / 2 + 4
+            px, py = 3 + size * 0.12, 2 + size * 0.3        # descenders and the soft shade belong to the name (as in the viewer)
+            bx0, by0, bx1, by1 = sx - tw / 2 - px, sy - th / 2 - py, sx + tw / 2 + px, sy + th / 2 + py
             if not moved and keep_on_disk and max(math.hypot(px - cx, py - cy) for px in (bx0, bx1) for py in (by0, by1)) > R * 0.995:
                 continue
             a0, b0, a1, b1 = int(bx0 // cell), int(by0 // cell), int(bx1 // cell) + 1, int(by1 // cell) + 1
@@ -581,6 +594,70 @@ def clean_shape(s):
     return out
 
 
+MAX_SHAPES, MAX_POINTS = 5000, 200_000          # drawings, and the points of all the outlines together
+
+
+def clean_shapes(shapes):
+    """The drawable ones of a sidecar's drawings, at most MAX_SHAPES with MAX_POINTS outline points between them: a
+    sidecar received from someone else must not be able to stall the viewer or the export."""
+    out, points = [], 0
+    for c in map(clean_shape, shapes if isinstance(shapes, list) else []):
+        if c is None:
+            continue
+        points += len(c.get('pts', ()))
+        if len(out) >= MAX_SHAPES or points > MAX_POINTS:
+            break
+        out.append(c)
+    return out
+
+
+def transform_edits(edits, M, b):
+    """The viewer's edits for an image that was turned by new = M @ old + b (M a rotation, maybe with a mirror): the
+    drawings, and the moved names' offsets. An ellipse or a rectangle is an outline of its own after a turn that is not a
+    right angle, so those become closed outlines."""
+    M, b = np.asarray(M, float), np.asarray(b, float)
+    P = lambda x, y: [float(v) for v in M @ [x, y] + b]                        # noqa: E731
+    out = dict(edits)
+    shapes = []
+    for s in clean_shapes(edits.get('shapes')):
+        s = dict(s)
+        k = s['kind']
+        if k == 'circle':
+            s['cx'], s['cy'] = P(s['cx'], s['cy'])
+        elif k in ('ellipse', 'rect'):
+            if k == 'ellipse':
+                t = np.linspace(0, 2 * math.pi, 96, endpoint=False)
+                cx, cy, rx, ry = (s['x0'] + s['x1']) / 2, (s['y0'] + s['y1']) / 2, abs(s['x1'] - s['x0']) / 2, abs(s['y1'] - s['y0']) / 2
+                pts = [P(cx + rx * math.cos(a), cy + ry * math.sin(a)) for a in t]
+            else:
+                pts = [P(x, y) for x, y in ((s['x0'], s['y0']), (s['x1'], s['y0']), (s['x1'], s['y1']), (s['x0'], s['y1']))]
+            s = {key: v for key, v in s.items() if key not in ('x0', 'y0', 'x1', 'y1')}
+            s.update(kind='outline', pts=pts, closed=True)
+        elif k == 'arrow':
+            s['x0'], s['y0'] = P(s['x0'], s['y0'])
+            s['x1'], s['y1'] = P(s['x1'], s['y1'])
+        elif k == 'text':
+            s['x'], s['y'] = P(s['x'], s['y'])
+        elif k == 'outline':
+            s['pts'] = [P(x, y) for x, y in s['pts']]
+        elif k == 'measure':
+            for e in ('a', 'b'):
+                s[e] = dict(zip('xy', P(s[e]['x'], s[e]['y'])))
+        shapes.append(s)
+    out['shapes'] = shapes
+    labels = edits.get('labels')
+    if isinstance(labels, dict):
+        moved = {}
+        for name, v in labels.items():
+            v = clean_label_override(v)
+            if v and 'dx' in v:
+                v['dx'], v['dy'] = (float(t) for t in M @ [v['dx'], v['dy']])
+            if v:
+                moved[name] = v
+        out['labels'] = moved
+    return out
+
+
 def clean_label_override(v):
     """A name's placement / style override from the viewer ({dx, dy, colour, size}), correctly typed, or None."""
     if not isinstance(v, dict):
@@ -601,10 +678,7 @@ def shapes_overlay(shapes, geo, view, fonts_for, font_scale=1.0):
     Kinds: circle, ellipse, rect, outline, arrow, text, measure. Returns (lines, labels)."""
     to_out, scale = view_mapper(view)
     lines, labels = [], []
-    for s in shapes if isinstance(shapes, list) else ():
-        s = clean_shape(s)
-        if s is None:
-            continue                                     # a damaged or unknown shape in the sidecar is skipped
+    for s in clean_shapes(shapes):                       # a damaged or unknown shape in the sidecar is skipped
         kind = s['kind']
         col = hex_rgba(s.get('colour'), 255)
         size = s.get('size', 1.0)
@@ -680,6 +754,10 @@ def capture_time(image):
     s = stamp(image)
     if s:
         return f'{s[0]} {s[1]} UTC'
+    from atlas_ephem import _sidecar_time                      # a time given with --time
+    t = _sidecar_time(image)
+    if t:
+        return f'{t:%Y-%m-%d %H:%M} UTC'
     lay = os.path.splitext(image)[0] + '_layout.json'
     alt = os.path.join(os.path.dirname(image), 'mosaic_layout.json')
     for p in (lay, alt):
@@ -696,7 +774,7 @@ def capture_time(image):
     return None
 
 
-def info_block(geo, view, fonts, font_scale=1.0, date=None, optics=None, title=None):
+def info_block(geo, view, fonts, font_scale=1.0, date=None, optics=None, title=None, sky=None):
     """Bottom-left panel: title, capture time, optics, image scale with a scale bar, and N / E arrows.
     Returns (lines, labels, box in output px)."""
     to_out, scale = view_mapper(view)
@@ -704,7 +782,7 @@ def info_block(geo, view, fonts, font_scale=1.0, date=None, optics=None, title=N
     fs = font_scale
     pad, gap = 12 * fs, 6 * fs
     km_px = geo.km_per_px / scale
-    rows = [t for t in (title, date, optics, f'{km_px:.2f} km/px') if t]
+    rows = [t for t in (title, date, sky, optics, f'{km_px:.2f} km/px') if t]
     size, big = max(8, int(round(13 * fs))), max(9, int(round(15 * fs)))
     nice = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
     bar_km = max([n for n in nice if n / km_px <= 170 * fs] or [nice[0]])

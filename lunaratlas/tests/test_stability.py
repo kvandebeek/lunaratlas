@@ -189,10 +189,10 @@ class ViewerUnderLoad(unittest.TestCase):
         host, port = self.v.url.split('//')[1].split(':')
         for _ in range(20):
             s = socket.create_connection((host, int(port)), timeout=5)
-            s.sendall(b'POST /edits HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\n{"shapes": [')
+            s.sendall(b'POST /edits HTTP/1.1\r\nHost: localhost\r\nCookie: ' + self.v.cookie.encode() + b'\r\nContent-Length: 100000\r\n\r\n{"shapes": [')
             s.close()                                                   # a body that never arrives
         s = socket.create_connection((host, int(port)), timeout=5)
-        s.sendall(b'GET /tiles/0/0_0.jpg HTTP/1.1\r\nHost: localhost\r\n\r\n')
+        s.sendall(b'GET /tiles/0/0_0.jpg HTTP/1.1\r\nHost: localhost\r\nCookie: ' + self.v.cookie.encode() + b'\r\n\r\n')
         s.close()
         self.assertEqual(self.v.request('/edits')[0], 200)
         self.assertIsNone(self.v.proc.poll())

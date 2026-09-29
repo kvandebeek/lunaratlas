@@ -324,20 +324,20 @@ class ViewerLatency(S.TempDir, unittest.TestCase):
 
     def test_the_first_load_of_the_page(self):
         t = time.perf_counter()
-        for p in ('/', '/viewer.js', '/viewer.css', '/fonts.css', '/data.js', '/edits', '/export/status'):
+        for p in ('/', '/viewer.js', '/viewer.css', '/fonts.css', '/data.json', '/edits', '/export/status'):
             self.assertEqual(self.v.request(p, raw=True)[0], 200, p)
         self.assertLess(time.perf_counter() - t, S.budget(30), 'everything the page needs before it draws')
 
     def test_the_page_assets_answer_quickly(self):
-        for p, budget in (('/', 2), ('/viewer.js', 2), ('/viewer.css', 2), ('/fonts.css', 2), ('/data.js', 3),
+        for p, budget in (('/', 2), ('/viewer.js', 2), ('/viewer.css', 2), ('/fonts.css', 2), ('/data.json', 3),
                           ('/edits', 1), ('/export/status', 1)):
             with self.subTest(p):
                 self.assertLess(self.best_of(p), S.budget(budget), f'{p} is too slow')
 
     def test_tiles_answer_quickly(self):
         import json
-        body = self.v.request('/data.js', raw=True)[1].decode()
-        d = json.loads(body[len('window.ATLAS = '):].rstrip().rstrip(';'))
+        body = self.v.request('/data.json', raw=True)[1].decode()
+        d = json.loads(body)
         paths = [f'/tiles/{lv}/{c}_{r}.jpg' for lv, L in enumerate(d['levels'])
                  for c in range(L['cols']) for r in range(L['rows'])]
         self.assertGreater(len(paths), 5)
@@ -346,7 +346,7 @@ class ViewerLatency(S.TempDir, unittest.TestCase):
 
     def test_a_long_session_of_mixed_requests_stays_fast(self):
         # no per-request leak: the last hundred requests are no slower than the first hundred
-        paths = ['/', '/data.js', '/edits', '/export/status', '/tiles/0/0_0.jpg', '/viewer.js']
+        paths = ['/', '/data.json', '/edits', '/export/status', '/tiles/0/0_0.jpg', '/viewer.js']
         first = sum(self.best_of(p, each=2) for p in paths)
         for i in range(200):
             self.v.request(paths[i % len(paths)], raw=True)

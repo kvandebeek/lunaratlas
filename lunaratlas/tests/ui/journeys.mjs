@@ -562,6 +562,9 @@ const J = {
     await ok(!(await b.js(`document.querySelector('[name=reg][value=feature]').disabled`)), `with ${p.n} selected "Around feature" is offered`);
     await b.click('[name=reg][value=feature]');
     await b.click('[name=fmt][value=tiff]');
+    await b.click('#xNorth');
+    await ok(await b.js(`document.querySelector('[name=reg][value=view]').disabled`), 'North up switches "Current view" off (its box counts pixels of the picture as it was taken)');
+    await ok(/turned/.test(await b.text('#outSize')), 'and the size line says the canvas grows');
     await b.click('#xGo');
     const d3 = await exported(b, 'tiff?');
     await ok(/Written: .*\.tiff?/.test(d3), `a close-up around ${p.n} exports as TIFF ("${d3}")`);

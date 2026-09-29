@@ -152,12 +152,13 @@ class ViewerServer(unittest.TestCase):
             self.assertIn(word, body, path)
             self.assertEqual(hdr['Cache-Control'], 'no-store')
 
-    def test_data_js(self):
-        code, body, _ = self.v.request('/data.js', raw=True)
+    def test_data_json(self):
+        code, body, hdr = self.v.request('/data.json', raw=True)
         self.assertEqual(code, 200)
-        text = body.decode('utf-8')
-        self.assertTrue(text.startswith('window.ATLAS = '))
-        d = json.loads(text[len('window.ATLAS = '):].rstrip().rstrip(';'))
+        self.assertTrue(hdr['Content-Type'].startswith('application/json'))
+        d = json.loads(body.decode('utf-8'))
+        self.assertNotIn('path', d, 'the page is not told where on the disk the photo is (the account name)')
+        self.assertFalse(d['launcher'])
         self.assertEqual((d['width'], d['height']), (1100, 1000))
         self.assertEqual(d['geometry'], self.geo.as_dict())
         self.assertEqual(d['image'], 'moon.tif')
@@ -166,8 +167,8 @@ class ViewerServer(unittest.TestCase):
         self.assertIn('Roboto', d['fonts'])
 
     def test_tiles(self):
-        code, body, hdr = self.v.request('/data.js', raw=True)
-        d = json.loads(body.decode()[len('window.ATLAS = '):].rstrip().rstrip(';'))
+        code, body, hdr = self.v.request('/data.json', raw=True)
+        d = json.loads(body.decode())
         for lvl, L in enumerate(d['levels']):
             for c in range(L['cols']):
                 for r in range(L['rows']):
@@ -300,7 +301,7 @@ class BrowserSelfTest(unittest.TestCase):
         with open(dom, 'w') as out, open(err, 'w') as log:
             proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--no-first-run',
                                      '--no-default-browser-check', f'--user-data-dir={profile}', '--window-size=1400,900',
-                                     '--virtual-time-budget=20000', '--dump-dom', v.url + '/selftest'],
+                                     '--virtual-time-budget=20000', '--dump-dom', v.url + '/selftest?t=' + v.token],
                                     stdout=out, stderr=log)
         self.addCleanup(self.kill_profile, proc, profile)
         m, t0 = None, time.time()

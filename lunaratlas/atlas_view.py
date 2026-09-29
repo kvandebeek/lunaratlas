@@ -6,10 +6,12 @@ of lunaratlas/fonts, the user's edits (kept in IMAGE.atlas.json under "edits") a
 `lunaratlas.py export` in a separate process and reports its progress.
 """
 import hashlib
+import hmac
 import json
 import math
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -18,17 +20,18 @@ import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 import socketserver
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlencode
 
 import cv2
 import numpy as np
 
 from atlas_geo import R_MOON, image_signature, load_geo, sidecar_path, write_json_atomic
 from atlas_names import load_features
-from atlas_paths import CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, self_command
-from atlas_render import BUNDLED, FONT_DIR, Fonts, clean_label_override, clean_shape, light_levels, rim_polygon
+from atlas_paths import CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, private_dir, self_command
+from atlas_render import BUNDLED, FONT_DIR, Fonts, clean_label_override, clean_shapes, light_levels, rim_polygon
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, 'viewer')
@@ -36,6 +39,7 @@ CACHE = os.path.join(CACHE_ROOT, 'tiles')
 TILE = 512
 VIEWER_FONTS = BUNDLED                          # shipped with the app: the viewer never waits for a download
 EDITS_SCHEMA = 'lunaratlas.edits/1'
+MAX_JSON = 16 << 20                             # the biggest request body the page can send (the edits: 5000 shapes)
 
 
 # ---------------------------------------------------------------- tiles
@@ -68,7 +72,9 @@ def build_tiles(image, raw, log):
     if os.path.isdir(d):
         shutil.rmtree(d)
     try:
-        os.makedirs(d, exist_ok=True)
+        private_dir(CACHE_ROOT)
+        private_dir(CACHE)
+        private_dir(d)
     except OSError as e:
         raise SystemExit(f'cannot write the tile cache {d}: {e.strerror or e} '
                          '(set HOME to a writable folder, or delete the cache folder)') from None
@@ -155,7 +161,9 @@ def page_data(image, raw, geo, side, levels, log):
             r['e'] = [round(ex, 1), round(ey, 1), round(ew / 2, 1), round(eh / 2, 1), round(ang, 1)]
         rows.append(r)
     log(f'{len(rows)} features on the visible side')
-    return dict(image=os.path.basename(image), path=os.path.abspath(image), width=W, height=H, tile=TILE, levels=levels, tiles_v=tile_version(image),
+    from atlas_ephem import capture_time as taken_at, sky_text
+    when = taken_at(image)
+    return dict(image=os.path.basename(image), sky=sky_text(when) if when else None, width=W, height=H, tile=TILE, levels=levels, tiles_v=tile_version(image),
                 geometry=geo.as_dict(), radius_px=geo.radius_px, km_per_px=geo.km_per_px, R_moon=R_MOON,
                 quality=side.get('quality', {}), gate=(side.get('quality_gate') or {}).get('line'),
                 features=rows, grid=graticule(geo), fonts=[f for f in VIEWER_FONTS if font_files(f)])
@@ -211,8 +219,8 @@ def clean_edits(e):
     Drawings and label overrides that could not be drawn are dropped rather than saved."""
     e = e if isinstance(e, dict) else {}
     out = dict(schema=EDITS_SCHEMA)
-    shapes = e.get('shapes') if isinstance(e.get('shapes'), list) else []
-    out['shapes'] = [c for c in map(clean_shape, shapes) if c is not None][:5000]
+    shapes = e.get('shapes')
+    out['shapes'] = clean_shapes(shapes)
     hidden = e.get('hidden') if isinstance(e.get('hidden'), list) else []
     out['hidden'] = sorted({n for n in hidden if isinstance(n, str)})
     labs = e.get('labels') if isinstance(e.get('labels'), dict) else {}
@@ -290,8 +298,12 @@ def export_command(image, o):
         tag = f'_region_{x}_{y}'
     elif o.get('region') == 'feature' and isinstance(o.get('name'), str) and o['name'].strip():
         w, h = (int(round(float(v))) for v in o.get('size', [3000, 2000]))
-        args += ['--around', o['name'], '--size', f'{max(1, w)}x{max(1, h)}']
+        args += [f"--around={o['name']}", '--size', f'{max(1, w)}x{max(1, h)}']
         tag = '_' + re.sub(r'[^\w.-]+', '_', o['name']).strip('_')
+    if o.get('north_up'):
+        if o.get('region') == 'view':
+            raise ValueError('north up needs the whole image or a feature, not the current view')
+        args.append('--north-up')
     if o.get('scale') == 'half':
         args += ['--scale', '0.5']
     elif o.get('scale') == 'max':
@@ -337,11 +349,19 @@ class Session:
     def __init__(self, image, geo, side, raw, log=print):
         self.image = image
         levels = build_tiles(image, raw, log)
-        self.data_js = ('window.ATLAS = ' + json.dumps(page_data(image, raw, geo, side, levels, log), ensure_ascii=False,
-                                                       separators=(',', ':')) + ';\n').encode()
+        self.data = page_data(image, raw, geo, side, levels, log)
+        self._json: dict[bool, bytes] = {}
         self.tiles = tile_dir(image)
         self.lock = threading.Lock()
         self.job: ExportJob | None = None
+
+    def data_json(self, launcher):
+        """The page's data as JSON (fetched by the page: a script include from another site would run it there);
+        launcher says the page has the launcher to go back to."""
+        if launcher not in self._json:
+            self._json[launcher] = json.dumps(dict(self.data, launcher=launcher), ensure_ascii=False,
+                                              separators=(',', ':')).encode()
+        return self._json[launcher]
 
 
 class Server(ThreadingHTTPServer):
@@ -349,6 +369,19 @@ class Server(ThreadingHTTPServer):
     session: 'Session | None' = None
     app: Any = None
     log: Any = print
+    token = ''                                  # this run's secret: every request but the ping must show it
+
+    @property
+    def cookie_name(self):
+        return f'la_{self.server_port}'         # cookies ignore ports: two instances on one host must not share one
+
+    def url(self, path='/', secret=False):
+        """The address of a page; with secret, the one-time form that hands the browser the token."""
+        return f'http://localhost:{self.server_port}{path}' + (f'?t={self.token}' if secret else '')
+
+    def prove(self, nonce):
+        """What only this server can answer to a nonce (the second start's check that it talks to its own app)."""
+        return hmac.new(self.token.encode(), nonce.encode(), 'sha256').hexdigest()
 
     def server_bind(self):
         """As HTTPServer's, without its socket.getfqdn('127.0.0.1'): a reverse lookup that can wait half a minute
@@ -357,8 +390,16 @@ class Server(ThreadingHTTPServer):
         self.server_name, self.server_port = 'localhost', self.server_address[1]
 
 
-class Handler(SimpleHTTPRequestHandler):
+class Handler(BaseHTTPRequestHandler):
     """The viewer's routes for server.session; anything else goes to server.app (the launcher page) when there is one."""
+
+    server_version, sys_version = 'LunarAtlas', ''      # no interpreter version in every response
+
+    def version_string(self):
+        return self.server_version
+    timeout = 120                              # a client that stalls mid-request does not keep a thread for ever
+    CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+           "font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'")
 
     @property
     def srv(self) -> Server:
@@ -366,6 +407,16 @@ class Handler(SimpleHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+    def end_headers(self):
+        """On every response, error pages included: no framing (clickjacking), no other origin's pages reading it, no
+        content sniffing, and a policy that only lets the page's own scripts run."""
+        self.send_header('Content-Security-Policy', self.CSP)
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        super().end_headers()
 
     def reply(self, body, ctype, code=200, cache=False):
         self.send_response(code)
@@ -386,27 +437,60 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def local(self):
-        """Only this machine's pages: a Host that is not localhost (DNS rebinding) or a POST from another site's page
-        (Origin) is refused."""
+        """Only this machine's pages: a Host that is not localhost (DNS rebinding), a request another site's page
+        makes (Origin, or Sec-Fetch-Site: a <script> or <img> include sends no Origin) is refused."""
         host = (self.headers.get('Host') or '').rsplit(':', 1)[0]
         if host not in ('localhost', '127.0.0.1', '[::1]'):
+            return False
+        if self.headers.get('Sec-Fetch-Site', 'same-origin') not in ('same-origin', 'none'):
             return False
         origin = self.headers.get('Origin')
         return origin is None or re.fullmatch(r'http://(localhost|127\.0\.0\.1|\[::1\]):%d' % self.srv.server_port,
                                               origin) is not None
 
+    def authed(self):
+        """The request carries this run's token: in the cookie the page got at its first visit (HttpOnly, SameSite=Strict:
+        a script cannot read it and another site's request does not carry it), or in X-LA-Token for a client that is
+        not a browser. Another user's or process's request on this port has neither."""
+        tok = self.srv.token
+        if not tok:
+            return True
+        try:
+            jar = SimpleCookie(self.headers.get('Cookie') or '')
+        except Exception:                      # noqa: BLE001  (a cookie header that does not parse is no cookie)
+            jar = SimpleCookie()
+        for have in (jar[self.srv.cookie_name].value if self.srv.cookie_name in jar else '', self.headers.get('X-LA-Token') or ''):
+            if have and hmac.compare_digest(have.encode(), tok.encode()):
+                return True
+        return False
+
+    def enter(self, path, query):
+        """The link with the token (?t=…) sets the cookie and goes on to the same page without it. False: not that."""
+        q = parse_qs(query, keep_blank_values=True)
+        t = (q.pop('t', None) or [''])[0]
+        if not (t and self.srv.token and hmac.compare_digest(t.encode(), self.srv.token.encode())):
+            return False
+        self.send_response(303)
+        self.send_header('Location', path + ('?' + urlencode(q, doseq=True) if q else ''))
+        self.send_header('Set-Cookie', f'{self.srv.cookie_name}={self.srv.token}; Path=/; HttpOnly; SameSite=Strict')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+        return True
+
     def page(self):
         with open(os.path.join(PAGE, 'index.html'), 'rb') as fh:
-            page = fh.read()
-        if self.srv.app is not None:           # the launcher: a way back to it from the viewer (#otherImage)
-            page = page.replace(b'</body>', b'<script>document.getElementById("otherImage").hidden = false;'
-                                b'setInterval(() => fetch("/app/ping").catch(() => {}), 20000);</script>\n</body>')
-        return page
+            return fh.read()
 
     def do_GET(self):
         if not self.local():
             return self.send_error(403)
-        p = self.path.split('?')[0]
+        p, _, query = self.path.partition('?')
+        if p == '/app/ping' and 'nonce=' in query:        # asked by a second start, which has no cookie: proves, reveals nothing
+            return self.reply(b'lunaratlas:' + self.srv.prove((parse_qs(query).get('nonce') or [''])[0]).encode(), 'text/plain')
+        if self.enter(p, query):
+            return
+        if not self.authed():
+            return self.send_error(403)
         app, s = self.srv.app, self.srv.session
         if app is not None and app.get(self, p):
             return
@@ -416,13 +500,15 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_error(404)
         if p in ('/', '/index.html'):
             return self.reply(self.page(), 'text/html; charset=utf-8')
+        if p in ('/selftest', '/selftest.js') and not os.environ.get('LUNARATLAS_SELFTEST'):
+            return self.send_error(404)             # a test affordance: only when the tests switch it on
         if p == '/selftest':                   # tests/viewer_selftest.js on top of the real page
             return self.reply(self.page().replace(b'</body>', b'<script src="/selftest.js"></script>\n</body>'),
                               'text/html; charset=utf-8')
         if p == '/selftest.js':
             return self.file(os.path.join(HERE, 'tests', 'viewer_selftest.js'), 'text/javascript')
-        if p == '/data.js':
-            return self.reply(s.data_js, 'text/javascript')
+        if p == '/data.json':
+            return self.reply(s.data_json(self.srv.app is not None), 'application/json')
         if p == '/edits':
             return self.json(read_edits(s.image))
         if p == '/export/status':
@@ -435,7 +521,7 @@ class Handler(SimpleHTTPRequestHandler):
     def static(self, p):
         if p in ('/favicon.svg', '/lunaratlas.svg'):
             self.file(os.path.join(PAGE, 'lunaratlas.svg'), 'image/svg+xml', cache=True)
-        elif p in ('/viewer.js', '/viewer.css', '/theme.css', '/friendly.js', '/exif.js'):
+        elif p in ('/viewer.js', '/boot.js', '/app.js', '/viewer.css', '/theme.css', '/friendly.js', '/exif.js'):
             self.file(os.path.join(PAGE, p[1:]), 'text/javascript' if p.endswith('.js') else 'text/css')
         elif p == '/fonts.css':
             self.reply(fonts_css_cached(), 'text/css')
@@ -447,12 +533,37 @@ class Handler(SimpleHTTPRequestHandler):
             self.file(b if os.path.isfile(b) else os.path.join(FONT_DIR, m[1]), 'font/ttf', cache=True)
         return True
 
+    def length(self, limit):
+        """The request's Content-Length: 0 when it names none. A bad, negative or too large one raises ValueError
+        (a negative one would make rfile.read wait for the client to hang up)."""
+        n = int(self.headers.get('Content-Length') or 0)
+        if n < 0 or n > limit:
+            raise ValueError(f'Content-Length {n} is not between 0 and {limit}')
+        return n
+
     def body(self):
-        n = int(self.headers.get('Content-Length', 0))
-        return json.loads(self.rfile.read(n) or b'{}')
+        n = self.length(MAX_JSON)
+        try:
+            return json.loads(self.rfile.read(n) or b'{}')
+        except RecursionError:                 # JSON nested thousands deep
+            raise ValueError('nested too deeply') from None
+
+    def do_HEAD(self):
+        self.refuse()
+
+    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD
+
+    def refuse(self):
+        """GET and POST only. Nothing else names a file on the disk, and a CORS preflight gets no yes."""
+        if not self.local():
+            return self.send_error(403)
+        self.send_response(405)
+        self.send_header('Allow', 'GET, POST')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
 
     def do_POST(self):
-        if not self.local():
+        if not self.local() or not self.authed():
             return self.send_error(403)
         p = self.path.split('?')[0]
         app, s = self.srv.app, self.srv.session
@@ -462,8 +573,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_error(404)
         try:
             o = self.body()
-        except ValueError:
-            return self.send_error(400)
+        except ValueError as e:
+            return self.json(dict(error=str(e)), 413 if 'Content-Length' in str(e) else 400)
         if p in ('/edits', '/export') and not isinstance(o, dict):
             return self.json(dict(error='expected a JSON object'), 400)
         if p == '/edits':
@@ -488,7 +599,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_error(404)
 
 
-def start_server(port, log=print, session=None, app=None):
+def start_server(port, log=print, session=None, app=None, token=None):
     """The HTTP server on the first free port from port on (not yet serving)."""
     for p in range(port, port + 20):
         try:
@@ -499,14 +610,16 @@ def start_server(port, log=print, session=None, app=None):
     else:
         raise SystemExit(f'no free port in {port}–{port + 19}')
     srv.session, srv.app, srv.log = session, app, log
+    srv.token = token or os.environ.get('LUNARATLAS_TOKEN') or secrets.token_urlsafe(32)
     return srv
 
 
 def run_server(srv, open_browser=True, log=print, path='/', what='viewer'):
-    url = f'http://localhost:{srv.server_port}{path}'
-    log(f'{what}: {url}  (Ctrl-C to stop)')
+    """Serve until Ctrl-C. The address with the token goes to the browser this opens; it is printed only when nothing
+    is opened (then it is the way in: this terminal is the user's own), never into a log file."""
+    log(f'{what}: {srv.url(path, secret=not open_browser)}  (Ctrl-C to stop)')
     if open_browser:
-        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.4, lambda: webbrowser.open(srv.url(path, secret=True))).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

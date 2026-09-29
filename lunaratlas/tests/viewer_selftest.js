@@ -7,6 +7,7 @@
 (async () => {
   const out = [], ok = (c, m) => out.push((c ? 'PASS ' : 'FAIL ') + m);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 200 && !window.__atlas; i++) await wait(50);      // boot.js fetches the data, then starts the page
   const cv = document.getElementById('map'), T = window.__atlas;
   const ev = (type, x, y, extra = {}) => cv.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0, pointerId: 1, ...extra }));
   const key = (k, extra = {}) => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...extra }));

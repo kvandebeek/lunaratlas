@@ -313,7 +313,7 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         img = os.path.join(self.tmp, 'moon.tif')
         cmd, out = av.export_command(img, dict(region='feature', name='Rupes Recta', size=[600, 400.4], scale='half',
                                                names=False, font='Comic Sans', night='bogus', format='bmp'))
-        self.assertEqual(cmd[cmd.index('--around') + 1], 'Rupes Recta')
+        self.assertIn('--around=Rupes Recta', cmd)
         self.assertEqual(cmd[cmd.index('--size') + 1], '600x400')
         self.assertEqual(cmd[cmd.index('--scale') + 1], '0.5')
         self.assertEqual(cmd[cmd.index('--layers') + 1], 'none')

@@ -12,8 +12,12 @@ the window stops everything. Otherwise it opens in the browser, and the launcher
 the last page was closed (the pages ping it), so nothing is left running unseen.
 """
 import hashlib
+import hmac
+import json
 import os
 import re
+import secrets
+import shutil
 import threading
 import time
 import http.client
@@ -25,11 +29,13 @@ import numpy as np
 
 from atlas_ephem import SHARPCAP
 from atlas_geo import load_geo, sidecar_path
-from atlas_paths import CACHE, self_command
+from atlas_paths import CACHE, private_dir, publish, self_command, temp_beside, user_dir
 from atlas_view import PAGE, ExportJob, Server, Session, reveal, run_server, start_server
 
 IMAGE_EXT = ('.tif', '.tiff', '.png', '.jpg', '.jpeg')
 PING = b'lunaratlas'
+MAX_UPLOAD = 4 << 30                           # one photo: mosaics of hundreds of MB are real, 4 GB is not a photo
+SPARE = 200 << 20                              # disk space an upload leaves free
 
 
 def work_folder():
@@ -135,11 +141,13 @@ class App:
         from urllib.parse import parse_qs, urlparse
         q = parse_qs(urlparse(h.path).query)
         try:
-            n = int(h.headers.get('Content-Length', ''))
+            n = h.length(MAX_UPLOAD)
             name = copy_name(q.get('name', [''])[0], q.get('time', [''])[0])
         except ValueError as e:
-            return h.json(dict(error=str(e) or 'bad upload'), 400)
+            return h.json(dict(error=str(e) or 'bad upload'), 413 if 'Content-Length' in str(e) else 400)
         os.makedirs(self.folder, exist_ok=True)
+        if shutil.disk_usage(self.folder).free < n + SPARE:
+            return h.json(dict(error='not enough free disk space for this image'), 507)
         dest = os.path.join(self.folder, name)
         stem, ext = os.path.splitext(dest)
         k = 2
@@ -148,7 +156,10 @@ class App:
         if os.path.exists(dest):                                        # the same file again: its sidecar is reused
             self.drain(h.rfile, n)
             return h.json(dict(path=dest, located=self.located(dest), name=os.path.basename(dest)))
-        tmp = dest + '.part'
+        try:
+            tmp = temp_beside(dest, '.part')
+        except OSError as e:
+            return h.json(dict(error=f'could not save the image: {e.strerror or e}'), 500)
         try:
             with open(tmp, 'wb') as fh:
                 left = n
@@ -158,7 +169,7 @@ class App:
                         raise OSError('the upload was cut off')
                     fh.write(chunk)
                     left -= len(chunk)
-            os.replace(tmp, dest)
+            publish(tmp, dest)
         except OSError as e:
             try:
                 os.remove(tmp)
@@ -270,11 +281,12 @@ class App:
             data = thumbnail(path)
             if data is None:
                 return h.send_error(404)
-            os.makedirs(os.path.dirname(out), exist_ok=True)
-            tmp = out + '.part'
+            private_dir(CACHE)
+            private_dir(os.path.dirname(out))
+            tmp = temp_beside(out)
             with open(tmp, 'wb') as fh:
                 fh.write(data)
-            os.replace(tmp, out)
+            publish(tmp, out)
         h.file(out, 'image/jpeg', cache=True)
 
     def recent(self):
@@ -340,23 +352,68 @@ def thumbnail(path, side=160):
     return buf.tobytes() if ok else None
 
 
-def already_running(port):
-    """True when a launcher already answers on port (a second start then hands over to it)."""
+def state_file():
+    return os.path.join(user_dir('data'), 'running.json')
+
+
+def write_state(srv):
+    """Where the running launcher is and its token, in a file only this user reads: a second start of the app finds the
+    first one through it (another user or process cannot, so cannot pass for it or take it over)."""
+    d = os.path.dirname(state_file())
+    private_dir(d)
+    tmp = temp_beside(state_file())
+    with open(tmp, 'w') as fh:
+        json.dump(dict(port=srv.server_port, token=srv.token, pid=os.getpid()), fh)
+    if os.name == 'posix':
+        os.chmod(tmp, 0o600)
+    os.replace(tmp, state_file())
+
+
+def read_state():
+    try:
+        with open(state_file()) as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) and isinstance(d.get('port'), int) and isinstance(d.get('token'), str) else None
+    except (OSError, ValueError):
+        return None
+
+
+def clear_state(srv):
+    st = read_state()
+    if st and st['token'] == srv.token:
+        try:
+            os.remove(state_file())
+        except OSError:
+            pass
+
+
+def already_running(port, token=None):
+    """True when the launcher that started with this token answers on port (a second start then hands over to it).
+    Whatever else answers on the port (another program, another user's launcher, a squatter) fails the proof and is
+    left alone. token: default, the one in the state file."""
+    if token is None:
+        st = read_state()
+        token = st['token'] if st and st['port'] == port else None
+    if not token:
+        return False
+    nonce = secrets.token_hex(8)
     c = http.client.HTTPConnection('127.0.0.1', port, timeout=2)     # not urllib: no proxy lookup for loopback
     try:
-        c.request('GET', '/app/ping', headers={'Host': 'localhost'})
-        return c.getresponse().read() == PING
+        c.request('GET', f'/app/ping?nonce={nonce}', headers={'Host': 'localhost'})
+        want = b'lunaratlas:' + hmac.new(token.encode(), nonce.encode(), 'sha256').hexdigest().encode()
+        return c.getresponse().read() == want
     except (OSError, http.client.HTTPException):
         return False
     finally:
         c.close()
 
 
-def focus(port):
+def focus(port, token):
     """Ask the running launcher to show its window: True when it has one."""
     c = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
     try:
-        c.request('POST', '/app/focus', b'{}', headers={'Host': 'localhost', 'Content-Type': 'application/json'})
+        c.request('POST', '/app/focus', b'{}', headers={'Host': 'localhost', 'Content-Type': 'application/json',
+                                                        'X-LA-Token': token})
         return b'true' in c.getresponse().read()
     except (OSError, http.client.HTTPException):
         return False
@@ -388,10 +445,11 @@ def idle_exit(app, srv, seconds, log):
 def run(port=8766, open_browser=True, folder=None, log=print, window=None, idle=0.0):
     """window: True = an app window (pywebview), False = the browser, None = a window when pywebview is there.
     idle: in browser mode, seconds without a page after which the launcher stops (0 = never)."""
-    if already_running(port):
-        log(f'already running: http://localhost:{port}/app')
-        if not focus(port) and open_browser:
-            webbrowser.open(f'http://localhost:{port}/app')
+    st = read_state()
+    if st and already_running(st['port'], st['token']):
+        log(f"already running: http://localhost:{st['port']}/app")
+        if not focus(st['port'], st['token']) and open_browser:
+            webbrowser.open(f"http://localhost:{st['port']}/app?t={st['token']}")
         return
     webview = webview_module() if window is not False and open_browser else None
     if window and webview is None:
@@ -399,6 +457,7 @@ def run(port=8766, open_browser=True, folder=None, log=print, window=None, idle=
     app = App(folder or work_folder(), log)
     srv = start_server(port, log, app=app)
     app.server = srv
+    write_state(srv)
     if webview is None:
         if idle:
             idle_exit(app, srv, idle, log)
@@ -406,11 +465,11 @@ def run(port=8766, open_browser=True, folder=None, log=print, window=None, idle=
             run_server(srv, open_browser, log, path='/app', what='LunarAtlas')
         finally:
             app.stop_jobs()
+            clear_state(srv)
         return
-    url = f'http://localhost:{srv.server_port}/app'
-    log(f'LunarAtlas: {url} in its own window')
+    log(f"LunarAtlas: {srv.url('/app')} in its own window")
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    app.window = webview.create_window('LunarAtlas', url, width=1440, height=920, min_size=(900, 620),
+    app.window = webview.create_window('LunarAtlas', srv.url('/app', secret=True), width=1440, height=920, min_size=(900, 620),
                                        background_color='#0A0F25', text_select=True)
     try:
         webview.start(private_mode=False)          # returns when the window is closed
@@ -418,5 +477,6 @@ def run(port=8766, open_browser=True, folder=None, log=print, window=None, idle=
         log('window closed: stopping')
         app.window = None
         app.stop_jobs()
+        clear_state(srv)
         srv.shutdown()
         srv.server_close()

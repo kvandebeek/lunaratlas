@@ -195,6 +195,37 @@ def ephemeris(t, obs=OBSERVER):
                 colongitude=_norm(90 - ss_lon), distance_km=dt, phase_angle=phase)
 
 
+def phase_summary(e):
+    """From an ephemeris() dict: the lit share of the disk (0–1), waxing or not, and the usual name of the phase.
+    The Sun lies east of the sub-observer longitude while the Moon waxes."""
+    k = (1 + math.cos(e['phase_angle'] * DEG)) / 2
+    waxing = ((e['sub_sun_lon'] - e['sub_obs_lon'] + 180) % 360 - 180) > 0
+    if k < 0.02:
+        name = 'new moon'
+    elif k > 0.98:
+        name = 'full moon'
+    elif 0.45 <= k <= 0.55:
+        name = 'first quarter' if waxing else 'last quarter'
+    else:
+        name = ('waxing ' if waxing else 'waning ') + ('crescent' if k < 0.5 else 'gibbous')
+    return dict(illumination=k, waxing=waxing, name=name)
+
+
+def phase_text(t, obs=OBSERVER):
+    """'first quarter, 51 % lit' at UTC t."""
+    p = phase_summary(ephemeris(t, obs))
+    return f"{p['name']}, {p['illumination'] * 100:.0f} % lit"
+
+
+def sky_text(t, obs=OBSERVER):
+    """One line about the sky at UTC t: 'first quarter, 51 % lit · Sun overhead at 1.2° N 42.0° E · colongitude 358°'."""
+    e = ephemeris(t, obs)
+    p = phase_summary(e)
+    la, lo = e['sub_sun_lat'], e['sub_sun_lon']
+    return (f"{p['name']}, {p['illumination'] * 100:.0f} % lit · Sun overhead at {abs(la):.1f}° {'N' if la >= 0 else 'S'} "
+            f"{abs(lo):.1f}° {'E' if lo >= 0 else 'W'} · colongitude {e['colongitude']:.0f}°")
+
+
 SHARPCAP = re.compile(r'(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})_(\d)')
 
 
@@ -203,12 +234,33 @@ def capture_time(name):
     without one, the middle of its panels' times (IMAGE_layout.json or mosaic_layout.json next to it); else None."""
     m = SHARPCAP.search(os.path.basename(name))
     if not m:
-        return _layout_time(name)
+        return _sidecar_time(name) or _layout_time(name)
     y, mo, d, h, mi, tenth = (int(v) for v in m.groups())
     try:
         return datetime(y, mo, d, h, mi, tenth * 6, tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def _sidecar_time(path):
+    """The capture time given with --time (kept in the sidecar's quality block), for a name that does not carry one."""
+    try:
+        with open(os.path.splitext(os.path.abspath(path))[0] + '.atlas.json') as fh:
+            when = json.load(fh)['quality']['capture_utc']
+        return datetime.strptime(when, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def parse_when(text):
+    """'2026-09-20T21:30', '2026-09-20 21:30' or with seconds (UTC) -> datetime; ValueError says what to type."""
+    t = (text or '').strip().replace('T', ' ').rstrip('Zz').strip()
+    for f in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+        try:
+            return datetime.strptime(t, f).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    raise ValueError(f'"{text}" is not a time: use UTC as YYYY-MM-DDTHH:MM, for example 2026-09-20T21:30')
 
 
 def _layout_time(path):

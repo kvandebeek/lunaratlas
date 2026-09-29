@@ -6,6 +6,7 @@ the Windows folder is caught on a Mac and the other way round.
 """
 import importlib.util
 import os
+import shutil
 import sys
 import threading
 import time
@@ -161,6 +162,13 @@ class PackagedEntryPoint(S.TempDir):
 class Startup(S.TempDir):
     """atlas_app.run: an app window when pywebview is there, else the browser; a second start hands over."""
 
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(atlas_app, 'state_file', lambda: os.path.join(self.tmp + '-state', 'running.json'))
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(shutil.rmtree, self.tmp + '-state', True)
+
     def fake_webview(self):
         wv = mock.Mock()
         wv.create_window.return_value = mock.Mock()
@@ -171,11 +179,12 @@ class Startup(S.TempDir):
         with mock.patch.object(atlas_app, 'webview_module', return_value=wv):
             atlas_app.run(port=S.free_port(), folder=self.tmp, log=logs.append)
         url = wv.create_window.call_args[0][1]
-        self.assertRegex(url, r'^http://localhost:\d+/app$')
+        self.assertRegex(url, r'^http://localhost:\d+/app\?t=[\w-]{20,}$', 'the window opens the token link')
         wv.start.assert_called_once()
         self.assertIn('window closed: stopping', logs)
         port = int(url.split(':')[2].split('/')[0])
         self.assertFalse(atlas_app.already_running(port), 'the server stopped with the window')
+        self.assertIsNone(atlas_app.read_state(), 'and took its state file with it')
 
     def test_no_pywebview_means_the_browser(self):
         logs = []
@@ -193,10 +202,11 @@ class Startup(S.TempDir):
         self.addCleanup(srv.server_close)
         self.addCleanup(srv.shutdown)
         logs = []
+        atlas_app.write_state(srv)
         with mock.patch.object(atlas_app.webbrowser, 'open') as wb:
             atlas_app.run(port=srv.server_port, log=logs.append)
         self.assertTrue(logs and logs[0].startswith('already running'), logs)
-        wb.assert_called_once_with(f'http://localhost:{srv.server_port}/app')
+        wb.assert_called_once_with(f'http://localhost:{srv.server_port}/app?t={srv.token}')
 
     def test_the_browser_launcher_stops_when_no_page_is_left(self):
         app = atlas_app.App(self.tmp, S.quiet)
@@ -208,9 +218,9 @@ class Startup(S.TempDir):
         logs = []
         atlas_app.idle_exit(app, srv, 0.05, logs.append)
         t0 = time.time()
-        while time.time() - t0 < 5 and atlas_app.already_running(srv.server_port):
+        while time.time() - t0 < 5 and atlas_app.already_running(srv.server_port, srv.token):
             time.sleep(0.05)
-        self.assertFalse(atlas_app.already_running(srv.server_port))
+        self.assertFalse(atlas_app.already_running(srv.server_port, srv.token))
         self.assertTrue(any('stopping' in l for l in logs), logs)
 
 

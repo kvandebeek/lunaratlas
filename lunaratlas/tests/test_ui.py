@@ -69,7 +69,7 @@ class UI(S.TempDir):
 
     def call(self, method, path, body=b''):
         c = http.client.HTTPConnection('127.0.0.1', self.srv.server_port, timeout=30)
-        c.request(method, path, body, {'Host': 'localhost'})
+        c.request(method, path, body, {'Host': 'localhost', 'X-LA-Token': self.srv.token})
         r = c.getresponse()
         data = r.read()
         c.close()
@@ -99,6 +99,7 @@ class UI(S.TempDir):
             self.skipTest(f'not in this browser: {why}')
         env = {k: v for k, v in os.environ.items() if k not in ('LUNARATLAS_CHROME', 'LUNARATLAS_WEBDRIVER')}
         env.update(BROWSER_ENV)
+        env['LUNARATLAS_UI_TOKEN'] = self.srv.token
         r = subprocess.run([NODE, JOURNEYS, name, self.base, self.out, json.dumps(args)], capture_output=True,
                            text=True, timeout=timeout, env=env)
         lines = r.stdout.splitlines()

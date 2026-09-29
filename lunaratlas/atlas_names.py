@@ -1,10 +1,12 @@
 """IAU lunar nomenclature (USGS Gazetteer of Planetary Nomenclature) + landing sites."""
 import json
 import os
+import shutil
 import struct
 import zipfile
 
 from atlas_geo import DATA, download, write_json_atomic
+from atlas_paths import publish, temp_beside
 
 GAZ_URL = 'https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.zip'
 GAZ_DIR = os.path.join(DATA, 'iau')
@@ -64,9 +66,18 @@ def _download(log):
     os.makedirs(GAZ_DIR, exist_ok=True)
     z = os.path.join(GAZ_DIR, 'MOON_nomenclature_center_pts.zip')
     log('downloading the IAU nomenclature (≈ 24 MB, once)')
-    download(GAZ_URL, z, zipfile.is_zipfile, log=log)
+    download(GAZ_URL, z, zipfile.is_zipfile, log=log, max_bytes=200_000_000)      # USGS updates it: no fixed checksum
     with zipfile.ZipFile(z) as zf:
-        zf.extractall(GAZ_DIR)
+        try:
+            info = zf.getinfo(os.path.basename(GAZ_DBF))                              # the one member that is used
+        except KeyError:
+            raise SystemExit('the IAU nomenclature archive has no table in it; not taken') from None
+        if info.file_size > 500_000_000:
+            raise SystemExit('the IAU nomenclature archive is not what it should be (its table is too large); not taken')
+        temp = temp_beside(GAZ_DBF)
+        with zf.open(info) as src, open(temp, 'wb') as out:
+            shutil.copyfileobj(src, out)
+        publish(temp, GAZ_DBF)
 
 
 def _build_json(log):

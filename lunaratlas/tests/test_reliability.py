@@ -46,7 +46,7 @@ class AtomicWrites(S.TempDir, unittest.TestCase):
     def test_temporary_file_keeps_the_extension(self):
         seen = []
         ag.write_atomic(os.path.join(self.tmp, 'x.png'), lambda t: (seen.append(t), cv2.imwrite(t, np.zeros((2, 2), np.uint8))))
-        self.assertTrue(seen[0].endswith('.part.png'))                  # cv2 picks the encoder from it
+        self.assertTrue(seen[0].endswith('.png') and os.path.basename(seen[0]) != 'x.png')                  # cv2 picks the encoder from it
         self.assertTrue(os.path.exists(os.path.join(self.tmp, 'x.png')))
 
 
@@ -73,20 +73,20 @@ class Downloads(S.TempDir, unittest.TestCase):
 
     def test_complete_download(self):
         with mock.patch.object(urllib.request, 'urlopen', return_value=FakeResponse(b'x' * 3_000_000)):
-            ag.download('http://example/f', self.dest(), lambda p: os.path.getsize(p) == 3_000_000)
+            ag.download('https://pds.lroc.im-ldi.com/f', self.dest(), lambda p: os.path.getsize(p) == 3_000_000)
         self.assertEqual(os.listdir(self.tmp), ['file.bin'])
 
     def test_damaged_download_leaves_nothing(self):
         with mock.patch.object(urllib.request, 'urlopen', return_value=FakeResponse(b'<html>error</html>')):
             with self.assertRaises(SystemExit) as cm:
-                ag.download('http://example/f', self.dest(), lambda p: False)
+                ag.download('https://pds.lroc.im-ldi.com/f', self.dest(), lambda p: False)
         self.assertIn('damaged', str(cm.exception))
         self.assertEqual(os.listdir(self.tmp), [])
 
     def test_broken_connection_leaves_nothing(self):
         with mock.patch.object(urllib.request, 'urlopen', return_value=FakeResponse(b'x' * 5_000_000, fail_after=2 << 20)):
             with self.assertRaises(ConnectionResetError):
-                ag.download('http://example/f', self.dest(), lambda p: True)
+                ag.download('https://pds.lroc.im-ldi.com/f', self.dest(), lambda p: True)
         self.assertEqual(os.listdir(self.tmp), [])
 
     def test_failed_redownload_keeps_the_old_copy(self):
@@ -94,7 +94,7 @@ class Downloads(S.TempDir, unittest.TestCase):
             fh.write(b'old')
         with mock.patch.object(urllib.request, 'urlopen', side_effect=OSError('offline')):
             with self.assertRaises(OSError):
-                ag.download('http://example/f', self.dest(), lambda p: True)
+                ag.download('https://pds.lroc.im-ldi.com/f', self.dest(), lambda p: True)
         with open(self.dest(), 'rb') as fh:
             self.assertEqual(fh.read(), b'old')
 

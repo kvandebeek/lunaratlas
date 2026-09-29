@@ -246,7 +246,7 @@ def run_main(*argv):
 
 def subprocess_env(home):
     """The environment for a CLI subprocess: its own HOME (tile cache), no browser, unbuffered output."""
-    env = dict(os.environ, HOME=home, PYTHONUNBUFFERED='1', LUNARATLAS_VIEW_OPEN='0')
+    env = dict(os.environ, HOME=home, PYTHONUNBUFFERED='1', LUNARATLAS_VIEW_OPEN='0', LUNARATLAS_SELFTEST='1')
     env.pop('PYTHONPATH', None)
     return env
 
@@ -269,7 +269,7 @@ class Viewer:
         self.proc = subprocess.Popen([sys.executable, CLI, 'view', image, '--no-open', '--port', str(port or free_port()),
                                       *extra], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                      env=subprocess_env(home))
-        self.lines, self.url = [], None
+        self.lines, self.url, self.token = [], None, ''
         t0 = time.time()
         while time.time() - t0 < 120:
             line = self.proc.stdout.readline()
@@ -277,7 +277,9 @@ class Viewer:
                 break
             self.lines.append(line.rstrip())
             if 'viewer: http://' in line:
-                self.url = line.split('viewer: ', 1)[1].split()[0].rstrip('/')
+                self.url = line.split('viewer: ', 1)[1].split()[0]
+                self.url, _, self.token = self.url.partition('?t=')       # --no-open prints the way in: with the token
+                self.url = self.url.rstrip('/')
                 break
         if self.url is None:
             self.close()
@@ -285,14 +287,22 @@ class Viewer:
         import threading
         threading.Thread(target=self._drain, daemon=True).start()
 
+    @property
+    def cookie(self):
+        """The Cookie header value of a browser that has entered with the token."""
+        return f"la_{self.url.rsplit(':', 1)[1]}={self.token}"
+
     def _drain(self):
         for line in self.proc.stdout:
             self.lines.append(line.rstrip())
 
-    def request(self, path, data=None, method=None, raw=False, timeout=30) -> tuple[int, Any, dict]:
+    def request(self, path, data=None, method=None, raw=False, timeout=30, auth=True) -> tuple[int, Any, dict]:
         body = data if isinstance(data, (bytes, type(None))) else json.dumps(data).encode()
+        hdr = {'Content-Type': 'application/json'} if body is not None else {}
+        if auth:
+            hdr['X-LA-Token'] = self.token
         req = urllib.request.Request(self.url + path, data=body, method=method or ('POST' if body is not None else 'GET'),
-                                     headers={'Content-Type': 'application/json'} if body is not None else {})
+                                     headers=hdr)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 b = r.read()

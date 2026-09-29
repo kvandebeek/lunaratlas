@@ -98,7 +98,7 @@ class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
         self.assertTrue(readonly(ro))
         self.addCleanup(readonly, ro, 0o755)
         code, out = S.run_main('export', self.img, '-o', os.path.join(ro, 'x.png'))
-        self.assertIn('could not write', str(code))
+        self.assertIn('cannot write', str(code))
         self.assertNotIn('Traceback', str(code))
         self.assertEqual(os.listdir(ro), [], 'nothing was created')
 
@@ -299,6 +299,7 @@ class HttpSurface(S.TempDir, unittest.TestCase):
         """Send bytes straight to the socket and return the first line of the answer."""
         host, port = self.v.url.split('//')[1].split(':')
         s = socket.create_connection((host, int(port)), timeout=timeout)
+        request = request.replace(b'Host: localhost\r\n', b'Host: localhost\r\nCookie: ' + self.v.cookie.encode() + b'\r\n', 1)
         try:
             s.sendall(request)
             s.settimeout(timeout)
@@ -323,9 +324,9 @@ class HttpSurface(S.TempDir, unittest.TestCase):
         self.assertEqual(v.request('/')[0], 200)
 
     def test_unusual_http_methods_are_refused_not_crashed(self):
-        for req, code in ((b'PUT /edits HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}', b'501'),
-                          (b'DELETE /edits HTTP/1.1\r\nHost: localhost\r\n\r\n', b'501'),
-                          (b'OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n', b'501'),
+        for req, code in ((b'PUT /edits HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}', b'405'),
+                          (b'DELETE /edits HTTP/1.1\r\nHost: localhost\r\n\r\n', b'405'),
+                          (b'OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n', b'405'),
                           (b'FROB / HTTP/1.1\r\nHost: localhost\r\n\r\n', b'501')):
             with self.subTest(req.split(b' ')[0]):
                 self.assertIn(code, self.raw(req), self.raw(req))
@@ -523,7 +524,7 @@ class TheNetworkIsNotThere(S.TempDir, unittest.TestCase):
         real = ar.Fonts._ensure
         asked = []
 
-        def offline(self, family, log):
+        def offline(self, family, log, download=True):
             asked.append(family)
             raise SystemExit(f'font {family}: not available offline')
 

@@ -4,13 +4,18 @@
   locate IMAGE              work out where every pixel lies on the Moon; saves IMAGE.atlas.json
   export IMAGE [options]    labelled 16-bit TIFF / 16-bit PNG / JPEG at 1:1 or smaller
   info IMAGE                geometry and quality of the positioning
-  find IMAGE NAME           where a named feature is in the image
+  find IMAGE NAME [NAME…]   where named features are in the image (--json, --csv)
+  batch FOLDER [options]    locate and export every photo in a folder, then a table of what happened
   view IMAGE                browser viewer and editor (labels, search, km measuring, your own drawings, export)
   app                       browser launcher: pick an image, locate it and open it in the viewer, no terminal needed
 
 Run `lunaratlas.py export -h` for the export options.
 """
 import argparse
+import contextlib
+import copy
+import csv
+import difflib
 import json
 import math
 import re
@@ -24,11 +29,11 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tool_settings as ts  # noqa: E402
-from atlas_geo import fit_limb, load_geo, locate, resize, save_geo, sidecar_path, unresize, R_MOON   # noqa: E402
+from atlas_geo import fit_limb, load_geo, locate, north_up, resize, save_geo, sidecar_path, unresize, write_atomic, R_MOON   # noqa: E402
 from atlas_names import load_features                                    # noqa: E402
 from atlas_quality import luminance, measure, thresholds, verdict                   # noqa: E402
 from atlas_render import (DEFAULT_FONT, LAYERS, Fonts, box_of, capture_time, draw, grid_overlay, info_block,  # noqa: E402
-                          layout, light_levels, shapes_overlay)
+                          layout, light_levels, shapes_overlay, transform_edits)
 
 T0 = time.perf_counter()
 
@@ -62,9 +67,10 @@ def quality_gate(image):
     return ok, reasons, line, q
 
 
-def geometry(image, relocate=False, force=False, gate=True):
+def geometry(image, relocate=False, force=False, gate=True, when=None):
     """The image's positioning, located (and saved) when needed. With gate, an image the quality gate refuses is
-    not annotated unless force; find and info pass gate=False and only report the verdict."""
+    not annotated unless force; find and info pass gate=False and only report the verdict. when: the capture time
+    (UTC datetime) for a file whose name does not carry one; it is kept in the sidecar."""
     geo, d = (None, None) if relocate else load_geo(image)
     if geo is not None:
         log(f'positioning from {os.path.basename(sidecar_path(image))}')
@@ -87,17 +93,20 @@ def geometry(image, relocate=False, force=False, gate=True):
         if not qm.get('has_limb'):
             raise SystemExit('no limb in view')
         from atlas_ephem import capture_time as _when
-        geo, q = locate(image, log, when=_when(image))
+        geo, q = locate(image, log, when=when or _when(image))
+        if when:
+            q['capture_utc'] = when.strftime('%Y-%m-%d %H:%M:%S')
     except SystemExit as e:
         # no usable limb (or the full-disk fit failed): a close-up, found blind from its time and optics
         from atlas_closeup import locate_closeup
         from atlas_ephem import capture_time
-        if capture_time(image) is None:
+        if when is None and capture_time(image) is None:
             hint = f' The quality gate found: {"; ".join(reasons)}.' if reasons else ''
-            raise SystemExit(f'{e}; a close-up needs its capture time in the name (SharpCap YYYY-MM-DD-HHMM_T-…).{hint}') from None
+            raise SystemExit(f'{e}; a close-up needs its capture time: in the name (SharpCap YYYY-MM-DD-HHMM_T-…) '
+                             f'or with --time YYYY-MM-DDTHH:MM (UTC).{hint}') from None
         log(f'{e}: searching the image as a close-up')
         try:
-            geo, q = locate_closeup(image, log)
+            geo, q = locate_closeup(image, log, when=when)
         except SystemExit as e2:
             hint = f' The quality gate found: {"; ".join(reasons)}.' if reasons else ''
             raise SystemExit(f'{e2}{hint}') from None
@@ -147,17 +156,47 @@ def sun_elevation_light(image, feats):
     return (elev + rad > 0.0).astype(float)
 
 
-def find_feature(feats, name):
+def when_of(a):
+    """--time as a UTC datetime, or None. A name that already carries its time needs no --time."""
+    text = getattr(a, 'time', None)
+    if not text:
+        return None
+    from atlas_ephem import SHARPCAP, parse_when
+    try:
+        when = parse_when(text)
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
+    if SHARPCAP.search(os.path.basename(a.image)):
+        raise SystemExit(f'{os.path.basename(a.image)} already carries its capture time in the name: drop --time')
+    return when
+
+
+def find_matches(feats, name, limit=5):
+    """(the feature, others that fit the name too, names that are near) for a name typed as it comes to mind: the exact
+    name wins, else names that start with it (Copernicus -> Copernicus A, B, ...), else spelling that is close."""
     n = name.strip().lower()
-    hit = [f for f in feats if f['name'].lower() == n] or [f for f in feats if f['name'].lower().startswith(n)]
-    if not hit:
-        raise SystemExit(f'no feature named "{name}"')
-    return hit[0]
+    exact = [f for f in feats if f['name'].lower() == n]
+    pre = [f for f in feats if f['name'].lower().startswith(n) and f not in exact]
+    if exact:                                       # the exact name, and what else starts with it (Copernicus A, B, …)
+        return exact[0], (exact[1:] + pre)[:limit], []
+    if pre:
+        return pre[0], pre[1:limit + 1], []
+    have = {f['name'].lower(): f['name'] for f in feats}
+    near = [have[k] for k in difflib.get_close_matches(n, list(have), n=limit, cutoff=0.6)]
+    near += [f['name'] for f in feats if n in f['name'].lower() and f['name'] not in near][:max(0, limit - len(near))]
+    return None, [], near
+
+
+def find_feature(feats, name):
+    hit, _, near = find_matches(feats, name)
+    if hit is None:
+        raise SystemExit(f'no feature named "{name}"' + (f'; did you mean {", ".join(near)}?' if near else ''))
+    return hit
 
 
 # ---------------------------------------------------------------- commands
 def cmd_locate(a):
-    geometry(a.image, relocate=True, force=a.force)
+    geometry(a.image, relocate=True, force=a.force, when=when_of(a))
 
 
 def cmd_info(a):
@@ -181,17 +220,57 @@ def cmd_info(a):
     g = d.get('quality_gate')
     if isinstance(g, dict) and 'line' in g:
         print(f"  {g['line']}" + ('  [annotated anyway: --force]' if g.get('forced') else ''))
+    from atlas_ephem import capture_time as when_taken, ephemeris, phase_summary
+    when = when_taken(a.image)
+    if when:
+        e = ephemeris(when)
+        p = phase_summary(e)
+        la, lo = e['sub_sun_lat'], e['sub_sun_lon']
+        print(f"  taken {when:%Y-%m-%d %H:%M} UTC: {p['name']}, {p['illumination'] * 100:.0f} % of the disk lit "
+              f"(phase angle {e['phase_angle']:.0f}°)")
+        print(f"  Sun overhead at {abs(la):.1f}° {'N' if la >= 0 else 'S'} {abs(lo):.1f}° {'E' if lo >= 0 else 'W'}, "
+              f"colongitude {e['colongitude']:.1f}°, Earth–Moon {e['distance_km']:,.0f} km")
+
+
+def feature_row(f, geo):
+    D = f['diam'] / R_MOON * geo.radius_px
+    vis = 'visible' if f['z'] > 0.1 else ('at the limb' if f['z'] > 0 else 'on the far side')
+    return dict(name=f['name'], type=f['type'], lat=round(f['lat'], 3), lon=round(f['lon'], 3), diameter_km=round(f['diam'], 2),
+                x=round(f['x'], 1), y=round(f['y'], 1), diameter_px=round(D, 1), visibility=vis, named_after=f['origin'] or '')
 
 
 def cmd_find(a):
-    geo = geometry(a.image, gate=False)
-    f = find_feature(project(load_features(log, sites=True), geo), a.name)
-    D = f['diam'] / R_MOON * geo.radius_px
-    vis = 'visible' if f['z'] > 0.1 else ('at the limb' if f['z'] > 0 else 'on the far side')
-    print(f"{f['name']} ({f['type']}): lat {f['lat']:+.3f}°, lon {f['lon']:+.3f}°, {f['diam']:.1f} km")
-    print(f"  image x {f['x']:.0f} px, y {f['y']:.0f} px, ≈ {D:.0f} px across, {vis}")
-    if f['origin']:
-        print(f"  named after: {f['origin']}")
+    with contextlib.redirect_stdout(sys.stderr if a.json or a.csv else sys.stdout):      # data on stdout, progress aside
+        geo = geometry(a.image, gate=False, when=when_of(a))
+        feats = project(load_features(log, sites=True), geo)
+    rows, missing = [], []
+    for name in a.names:
+        hit, others, near = find_matches(feats, name)
+        if hit is None:
+            missing.append(f'no feature named "{name}"' + (f'; did you mean {", ".join(near)}?' if near else ''))
+            continue
+        row = feature_row(hit, geo)
+        row['asked'] = name
+        row['also'] = [o['name'] for o in others]
+        rows.append(row)
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=1))
+    elif a.csv:
+        w = csv.writer(sys.stdout, lineterminator='\n')
+        cols = ['asked', 'name', 'type', 'lat', 'lon', 'diameter_km', 'x', 'y', 'diameter_px', 'visibility', 'named_after']
+        w.writerow(cols)
+        for r in rows:
+            w.writerow([r[c] for c in cols])
+    else:
+        for r in rows:
+            print(f"{r['name']} ({r['type']}): lat {r['lat']:+.3f}°, lon {r['lon']:+.3f}°, {r['diameter_km']:.1f} km")
+            print(f"  image x {r['x']:.0f} px, y {r['y']:.0f} px, ≈ {r['diameter_px']:.0f} px across, {r['visibility']}")
+            if r['named_after']:
+                print(f"  named after: {r['named_after']}")
+            if r['also']:
+                print(f"  also matches: {', '.join(r['also'])}")
+    if missing:
+        raise SystemExit('\n'.join(missing))
 
 
 EXTENSIONS = {'tiff': ('.tif', '.tiff'), 'png': ('.png',), 'jpg': ('.jpg', '.jpeg')}
@@ -250,6 +329,8 @@ def cmd_export(a):
         raise SystemExit('--max-size must be at least 1 px')
     if not 0 <= a.quality <= 100:
         raise SystemExit('--quality must be 0 to 100')
+    if a.north_up and a.region:
+        raise SystemExit('--north-up shows the whole picture or --around; --region counts pixels of the picture as it was taken')
     fmt, out = output_plan(a)
     layers = parse_layers(a.layers)
     if not a.lettered:
@@ -266,7 +347,7 @@ def cmd_export(a):
     raw = cv2.imread(a.image, cv2.IMREAD_UNCHANGED)
     if raw is None:
         raise SystemExit(f'cannot read {a.image}')
-    geo = geometry(a.image, force=a.force)
+    geo = geometry(a.image, force=a.force, when=when_of(a))
     if raw.ndim == 2:
         raw = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
     raw = raw[..., :3]
@@ -277,10 +358,26 @@ def cmd_export(a):
         log(f'{kind} input converted to 16-bit ({"0–1" if top <= 1.5 else "0–65535"} scale)')
     H, W = raw.shape[:2]
     feats = project(load_features(log, sites=True), geo)      # all features can be looked up; layers filter labels
+    light = light_levels(raw, geo, feats, [(f['x'], f['y']) for f in feats])   # night side, from the whole image
+    quality = (load_geo(a.image)[1] or {}).get('quality')
+    if isinstance(quality, dict) and quality.get('closeup'):
+        # a close-up has no sky to compare brightness with: the Sun's elevation from the capture time decides
+        light = sun_elevation_light(a.image, feats)
+    turn = None
+    if a.north_up:                                             # after the night side is known: the corners are black
+        raw, geo, turn = north_up(raw, geo)
+        H, W = raw.shape[:2]
+        feats = project(feats, geo)
+        log(f'turned so that north is up and east right: {W} x {H} px')
 
     # region in source pixels: the requested rectangle, cut to the image
     if a.around:
         f = find_feature(feats, a.around)
+        if a.fit and f['diam'] > 0:                            # the view follows the feature's own size
+            sw = max(600, int(round(2.2 * f['diam'] / R_MOON * geo.radius_px)))
+            sh = max(1, int(round(sw * sh / max(parse_ints(a.size, 2, '--size')[0], 1))))
+        elif a.fit:
+            log(f"{f['name']} has no diameter in the gazetteer: using --size")
         if f['z'] < 0.1:
             raise SystemExit(f"{f['name']} is {'at the limb' if f['z'] > 0 else 'on the far side'}: nothing to show around it")
         x0, y0 = int(round(f['x'] - sw / 2)), int(round(f['y'] - sh / 2))
@@ -296,25 +393,30 @@ def cmd_export(a):
     ow, oh = max(1, round(sw * scale)), max(1, round(sh * scale))
     log(f'view: x {x0} y {y0}, {sw} x {sh} px source -> {ow} x {oh} px output (scale {scale:.3f})')
 
-    light = light_levels(raw, geo, feats, [(f['x'], f['y']) for f in feats])   # night side, from the whole image
-    quality = (load_geo(a.image)[1] or {}).get('quality')
-    if isinstance(quality, dict) and quality.get('closeup'):
-        # a close-up has no sky to compare brightness with: the Sun's elevation from the capture time decides
-        light = sun_elevation_light(a.image, feats)
     vw = (x0, y0, (ow / sw, oh / sh), ow, oh)
     edits = (load_geo(a.image)[1] or {}).get('edits')
     edits = edits if isinstance(edits, dict) else {}
+    if turn is not None:
+        edits = transform_edits(edits, *turn)
     style = edits.get('style')
     style_font = style.get('font') if isinstance(style, dict) else None
+    from_sidecar = not a.font and isinstance(style_font, str)        # someone else's sidecar must not start a download
     a.font = str(a.font or (style_font if isinstance(style_font, str) else None) or ts.get('LUNARATLAS_FONT') or DEFAULT_FONT)
-    fonts = Fonts(a.font, log)
+    try:
+        fonts = Fonts(a.font, log, download=not from_sidecar)
+    except SystemExit as e:
+        if not from_sidecar:
+            raise
+        log(f'{e}; using {DEFAULT_FONT}')
+        a.font = DEFAULT_FONT
+        fonts = Fonts(a.font, log)
     families = {a.font: fonts}
 
     def fonts_for(family):
         family = family or a.font
         if family not in families:
             try:
-                families[family] = Fonts(family, log)
+                families[family] = Fonts(family, log, download=False)        # drawings' fonts come from the sidecar
             except SystemExit as e:                  # an unavailable font never stops an export
                 log(f'{e}; using {a.font}')
                 families[family] = fonts
@@ -327,7 +429,10 @@ def cmd_export(a):
         reserved += [box_of(l) for l in st]
         log(f"{len(edits['shapes'])} of your drawings")
     if a.info:
-        il, it, box = info_block(geo, vw, fonts, a.font_scale, date=capture_time(a.image), optics=optics_text(a.image))
+        from atlas_ephem import capture_time as taken_at, phase_text
+        taken = taken_at(a.image)
+        il, it, box = info_block(geo, vw, fonts, a.font_scale, date=capture_time(a.image), optics=optics_text(a.image),
+                                 sky=phase_text(taken) if taken else None)
         over_lines += il
         over_labels += it
         reserved.append(box)
@@ -349,20 +454,77 @@ def cmd_export(a):
     draw(img, over_labels, fonts, a.font_scale, lines=over_lines)
     log('labels drawn' + (' · lat/lon grid' if grid_lines else '') + (' · info block' if a.info else ''))
 
-    if fmt == 'jpg':
-        ok = cv2.imwrite(out, img, [cv2.IMWRITE_JPEG_QUALITY, a.quality])
-    elif fmt == 'png':
-        ok = cv2.imwrite(out, img, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-    else:
-        ok = cv2.imwrite(out, img, [cv2.IMWRITE_TIFF_COMPRESSION, 1])
-    if not ok:
-        raise SystemExit(f'could not write {out}')
+    params = {'jpg': [cv2.IMWRITE_JPEG_QUALITY, a.quality], 'png': [cv2.IMWRITE_PNG_COMPRESSION, 3]}.get(fmt, [cv2.IMWRITE_TIFF_COMPRESSION, 1])
+
+    def write(tmp):                                  # through a temporary file: an export never appears half written
+        if not cv2.imwrite(tmp, img, params):
+            raise OSError('the image encoder refused it')
+    write_atomic(out, write)
     log(f'wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)')
+
+
+IMAGE_EXT = ('.tif', '.tiff', '.png', '.jpg', '.jpeg')
+
+
+def batch_images(folder, recursive=False):
+    """The photos in a folder, in name order: no hidden files, none of LunarAtlas's own exports (IMAGE_atlas….ext)."""
+    out = []
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if recursive and not d.startswith('.'))
+        for n in sorted(files):
+            stem, ext = os.path.splitext(n)
+            if ext.lower() in IMAGE_EXT and not n.startswith('.') and not re.search(r'_atlas(_|$)', stem):
+                out.append(os.path.join(root, n))
+    return out
+
+
+def cmd_batch(a):
+    """Locate and export every photo of a folder, one after the other. A photo that cannot be done (damaged, refused by
+    the quality gate, not found) is reported and the others carry on; the exit status is 1 if any of them failed."""
+    if not os.path.isdir(a.folder):
+        raise SystemExit(f'{a.folder} is not a folder')
+    images = batch_images(a.folder, a.recursive)
+    if not images:
+        raise SystemExit(f'no images (tif, png, jpg) in {a.folder}')
+    results, t_all = [], time.perf_counter()
+    for i, image in enumerate(images, 1):
+        t0 = time.perf_counter()
+        name = os.path.relpath(image, a.folder)
+        log(f'[{i}/{len(images)}] {name}')
+        one = copy.copy(a)                            # cmd_export fills in a.font from the photo's own edits
+        one.image, one.output = image, None
+        try:
+            fmt, out = output_plan(one)
+            if a.skip_existing and os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(image):
+                results.append((name, 'skipped', f'{os.path.basename(out)} is already there', 0.0))
+                continue
+            if a.locate_only:
+                geometry(image, force=a.force)
+                results.append((name, 'located', '', time.perf_counter() - t0))
+            else:
+                cmd_export(one)
+                results.append((name, 'exported', os.path.basename(out), time.perf_counter() - t0))
+        except SystemExit as e:
+            msg = str(e.code) if e.code not in (None, 0) else 'stopped'
+            results.append((name, 'refused' if msg.startswith('not annotated') else 'failed', msg.splitlines()[0][:160],
+                            time.perf_counter() - t0))
+            log(f'  {msg}')
+        except Exception as e:                        # noqa: BLE001  (an odd file must not end the batch)
+            results.append((name, 'failed', f'{e.__class__.__name__}: {e}'[:160], time.perf_counter() - t0))
+            log(f'  {results[-1][2]}')
+    width = max(len(r[0]) for r in results)
+    print(f'\n{"image":<{width}}  {"result":<9} {"seconds":>7}  detail')
+    for name, status, detail, secs in results:
+        print(f'{name:<{width}}  {status:<9} {secs:7.1f}  {detail}')
+    counts = {k: sum(r[1] == k for r in results) for k in ('exported', 'located', 'skipped', 'refused', 'failed')}
+    print('\n' + ', '.join(f'{n} {k}' for k, n in counts.items() if n) + f' of {len(results)} in {time.perf_counter() - t_all:.0f} s')
+    if counts['failed'] or counts['refused']:
+        raise SystemExit(1)
 
 
 def cmd_view(a):
     from atlas_view import serve
-    geo = geometry(a.image, force=a.force)
+    geo = geometry(a.image, force=a.force, when=when_of(a))
     geo, d = load_geo(a.image)
     raw = cv2.imread(a.image, cv2.IMREAD_UNCHANGED)
     if raw is None:
@@ -376,36 +538,10 @@ def cmd_app(a):
     run(port=a.port, open_browser=a.open, folder=a.folder, log=log, window=a.window, idle=a.idle_exit)
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = p.add_subparsers(dest='cmd', required=True)
-    s = sub.add_parser('locate', help='position the image on the Moon (saves IMAGE.atlas.json)')
-    s.add_argument('image')
-    s.add_argument('--force', action='store_true', help='locate and annotate even if the quality gate refuses the image')
-    s.set_defaults(fn=cmd_locate)
-    s = sub.add_parser('info', help='show the saved positioning')
-    s.add_argument('image'); s.set_defaults(fn=cmd_info)
-    s = sub.add_parser('find', help='where is a named feature in the image')
-    s.add_argument('image'); s.add_argument('name'); s.set_defaults(fn=cmd_find)
-    s = sub.add_parser('view', help='open the image in the browser viewer and editor')
-    s.add_argument('image')
-    s.add_argument('--port', type=int, default=ts.get('LUNARATLAS_VIEW_PORT', 8766, int), help='first port to try (the next free one is used)')
-    s.add_argument('--open', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_VIEW_OPEN'), help='open the browser')
-    s.add_argument('--force', action='store_true', help='view even if the quality gate refuses the image')
-    s.set_defaults(fn=cmd_view)
-    s = sub.add_parser('app', help='browser launcher: pick an image, locate it, view and export it')
-    s.add_argument('--port', type=int, default=ts.get('LUNARATLAS_VIEW_PORT', 8766, int), help='first port to try (the next free one is used)')
-    s.add_argument('--open', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_VIEW_OPEN'), help='open the browser')
-    s.add_argument('--folder', help='work folder for the images and their exports (default ~/Pictures/LunarAtlas)')
-    s.add_argument('--window', action=argparse.BooleanOptionalAction, default=None,
-                   help='its own app window (needs pywebview) instead of the browser; default: a window when pywebview is installed')
-    s.add_argument('--idle-exit', type=float, default=0, metavar='SECONDS',
-                   help='browser mode: stop this long after the last page was closed (0 = never)')
-    s.set_defaults(fn=cmd_app)
-    s = sub.add_parser('export', help='labelled image: 16-bit TIFF / 16-bit PNG / JPEG',
-                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    s.add_argument('image')
-    s.add_argument('-o', '--output', help='output file (default IMAGE_atlas[_NAME].EXT)')
+def add_export_options(s, output=True):
+    """The options that shape an export: shared by export and batch."""
+    if output:
+        s.add_argument('-o', '--output', help='output file (default IMAGE_atlas[_NAME].EXT)')
     s.add_argument('--format', choices=['tiff', 'png', 'jpg'], help='tiff/png are 16-bit; default from -o, else tiff')
     s.add_argument('--scale', type=float, help='output scale, at most 1 (never upscaled)')
     s.add_argument('--max-size', type=int, default=ts.get('LUNARATLAS_MAX_SIZE') or None, help='longest output side in px (never upscaled)')
@@ -425,7 +561,57 @@ def main(argv=None):
     s.add_argument('--info', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_INFO'), help='info block (date, optics, scale bar, north arrow)')
     s.add_argument('--quality', type=int, default=ts.get('LUNARATLAS_JPEG_QUALITY', 92, int), help='JPEG quality')
     s.add_argument('--force', action='store_true', help='annotate even if the quality gate refuses the image')
+    s.add_argument('--north-up', action='store_true', help='turn the picture so lunar north is up and east right (never mirrored); with the whole picture or --around')
+    s.add_argument('--fit', action='store_true', help='with --around: size the view from the feature\'s own diameter (--size gives the shape)')
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest='cmd', required=True)
+    s = sub.add_parser('locate', help='position the image on the Moon (saves IMAGE.atlas.json)')
+    s.add_argument('image')
+    s.add_argument('--force', action='store_true', help='locate and annotate even if the quality gate refuses the image')
+    s.add_argument('--time', metavar='UTC', help='capture time YYYY-MM-DDTHH:MM (UTC) for a close-up whose name has none')
+    s.set_defaults(fn=cmd_locate)
+    s = sub.add_parser('info', help='show the saved positioning')
+    s.add_argument('image'); s.set_defaults(fn=cmd_info)
+    s = sub.add_parser('find', help='where is a named feature in the image')
+    s.add_argument('image'); s.add_argument('names', nargs='+', metavar='NAME', help='one or more feature names')
+    s.add_argument('--time', metavar='UTC', help='capture time YYYY-MM-DDTHH:MM for a file whose name has none (used if it must be located)')
+    out = s.add_mutually_exclusive_group()
+    out.add_argument('--json', action='store_true', help='the answers as JSON')
+    out.add_argument('--csv', action='store_true', help='the answers as CSV, one row per name')
+    s.set_defaults(fn=cmd_find)
+    s = sub.add_parser('view', help='open the image in the browser viewer and editor')
+    s.add_argument('image')
+    s.add_argument('--port', type=int, default=ts.get('LUNARATLAS_VIEW_PORT', 8766, int), help='first port to try (the next free one is used)')
+    s.add_argument('--open', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_VIEW_OPEN'), help='open the browser')
+    s.add_argument('--force', action='store_true', help='view even if the quality gate refuses the image')
+    s.add_argument('--time', metavar='UTC', help='capture time YYYY-MM-DDTHH:MM for a file whose name has none (used if it must be located)')
+    s.set_defaults(fn=cmd_view)
+    s = sub.add_parser('app', help='browser launcher: pick an image, locate it, view and export it')
+    s.add_argument('--port', type=int, default=ts.get('LUNARATLAS_VIEW_PORT', 8766, int), help='first port to try (the next free one is used)')
+    s.add_argument('--open', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_VIEW_OPEN'), help='open the browser')
+    s.add_argument('--folder', help='work folder for the images and their exports (default ~/Pictures/LunarAtlas)')
+    s.add_argument('--window', action=argparse.BooleanOptionalAction, default=None,
+                   help='its own app window (needs pywebview) instead of the browser; default: a window when pywebview is installed')
+    s.add_argument('--idle-exit', type=float, default=0, metavar='SECONDS',
+                   help='browser mode: stop this long after the last page was closed (0 = never)')
+    s.set_defaults(fn=cmd_app)
+    s = sub.add_parser('export', help='labelled image: 16-bit TIFF / 16-bit PNG / JPEG',
+                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    s.add_argument('image')
+    add_export_options(s)
+    s.add_argument('--time', metavar='UTC', help='capture time YYYY-MM-DDTHH:MM for a file whose name has none (used if it must be located)')
     s.set_defaults(fn=cmd_export)
+    s = sub.add_parser('batch', help='locate and export every photo in a folder',
+                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    s.add_argument('folder')
+    s.add_argument('-r', '--recursive', action='store_true', help='the sub-folders too')
+    s.add_argument('--skip-existing', action='store_true', help='leave a photo alone whose export is already there and not older')
+    s.add_argument('--locate-only', action='store_true', help='only position the photos (their .atlas.json), no export')
+    add_export_options(s, output=False)
+    s.set_defaults(fn=cmd_batch, time=None)
     a = p.parse_args(argv)
     a.fn(a)
 

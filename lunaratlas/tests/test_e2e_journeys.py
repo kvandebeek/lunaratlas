@@ -288,9 +288,9 @@ class ViewerJourney(Journey):
         return wait_for(done, timeout, 'the export')
 
     def data_js(self, viewer=None):
-        code, body, _ = (viewer or self.v).request('/data.js', raw=True)
+        code, body, _ = (viewer or self.v).request('/data.json', raw=True)
         self.assertEqual(code, 200)
-        return json.loads(body.decode()[len('window.ATLAS = '):].rstrip().rstrip(';'))
+        return json.loads(body.decode())
 
     def test_edits_survive_a_restart_of_the_viewer(self):
         e = dict(shapes=[dict(kind='circle', cx=self.cx, cy=self.cy, r=40, label='mine', colour='#ffb45a'),
@@ -346,9 +346,9 @@ class ViewerJourney(Journey):
         x, y = int(x), int(y)
         win = (slice(max(0, y - 45), y + 45), slice(max(0, x - 95), x + 95))
         bright_a = int((a[win] > 40000).sum())
-        bright_b = int((b[win] > 40000).sum())
+        gone = int(((a[win] > 40000) & (b[win] <= 40000)).sum())      # a name that had no room may move in beside it
         self.assertGreater(bright_a, 200, 'the label was drawn there to begin with')
-        self.assertLess(bright_b, bright_a * 0.6, f'{bright_a} bright pixels became {bright_b}')
+        self.assertGreater(gone, bright_a * 0.5, f'of {bright_a} bright pixels only {gone} went')
 
     def test_the_viewer_refuses_a_poor_image_until_force_is_given(self):
         # an overexposed disk: the quality gate refuses it, but it still locates, so --force can open it
@@ -372,7 +372,7 @@ class ViewerJourney(Journey):
         self.assertEqual(self.v.request('/edits')[1]['shapes'][0]['label'], 'second')
         tiles = os.path.join(self.home, 'Library', 'Caches', 'lunaratlas', 'tiles')
         self.assertEqual(len(os.listdir(tiles)), 1, 'one cache folder per image, shared by both viewers')
-        self.assertEqual(self.v.request('/data.js')[0], 200)
+        self.assertEqual(self.v.request('/data.json')[0], 200)
 
 
 @S.needs_all
@@ -400,7 +400,7 @@ class BrowserJourneys(Journey):
             proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--no-first-run',
                                      '--no-default-browser-check', f'--user-data-dir={profile}',
                                      '--window-size=1400,900', f'--virtual-time-budget={budget}',
-                                     '--dump-dom', f'{v.url}/selftest?group={group}'], stdout=out, stderr=log)
+                                     '--dump-dom', f'{v.url}/selftest?group={group}&t={v.token}'], stdout=out, stderr=log)
         self.addCleanup(self.kill, proc, profile)
 
         def read():

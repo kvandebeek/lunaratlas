@@ -264,6 +264,7 @@ export async function runJourney(name, fn, { chrome, launch, out, base }) {
     return false;
   };
   try {
+    if (process.env.LUNARATLAS_UI_TOKEN) await b.goto(`${base}/?t=${process.env.LUNARATLAS_UI_TOKEN}`);     // the token link: the cookie
     await fn(b, ok, base);
   } catch (e) {
     await ok(false, 'stopped: ' + (e.stack || e.message).split('\n').slice(0, 3).join(' | '));

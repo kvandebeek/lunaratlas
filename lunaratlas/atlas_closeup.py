@@ -97,6 +97,8 @@ def ask_optics(folder, log=print):
 
 
 # ---------------------------------------------------------------- shaded relief
+LOLA_SHA256 = {16: 'a511e40d7a3ea3275945b4da2a1df377133264fab0be94b7434b1cf8907254cb',            # fixed archive products
+               64: '1c4958699d4cffd7e777d51421b6044bba300aa0bef286a544309efb082cdbd6'}
 LOLA_URL = 'https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/img'
 
 
@@ -109,7 +111,8 @@ def lola_path(ppd, log=print):
     log(f'downloading the LOLA elevation model, {ppd} px/deg (≈ {size / 1e6:.0f} MB, once)' if not os.path.exists(p)
         else f'LOLA elevation model {ppd} px/deg is damaged: downloading it again')
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    download(f'{LOLA_URL}/ldem_{ppd}.img', p, lambda f: os.path.getsize(f) == size, timeout=120, log=log)
+    download(f'{LOLA_URL}/ldem_{ppd}.img', p, lambda f: os.path.getsize(f) == size, timeout=120, log=log,
+             sha256=LOLA_SHA256.get(ppd), max_bytes=size)
     return p
 
 
@@ -170,58 +173,121 @@ def normalise(x, sigma):
     return hp / np.sqrt(cv2.GaussianBlur(hp * hp, (0, 0), sigma * 2) + 1e-6)
 
 
-def blind_search(gray, km_list, lat0, lon0, sun, relief, ref, log, work_km=2.4, angle_step=4, keep=12):
-    """Candidates (score, km_per_px, angle, mirror, ref centre px) of the close-up over the Earth-facing hemisphere."""
+def view_template(gray, km, work_km, ang, mirror):
+    """The close-up as one search view: reduced to work_km per px, turned by ang (mirrored or not), cut to a disk of
+    0.9 of its short side. Returns (template, dict of what solve_hit needs to turn a match back into a geometry), or
+    None when the image is too small at this scale."""
+    small, (sx, sy) = resize(gray, km / work_km)
+    side = int(0.9 * min(small.shape))
+    if side < 24:
+        return None
+    sn = normalise(small, 3)
+    yy, xx = np.mgrid[0:side, 0:side]
+    circle = ((xx - (side - 1) / 2) ** 2 + (yy - (side - 1) / 2) ** 2) < (side / 2) ** 2
+    cs = np.array([(small.shape[1] - 1) / 2, (small.shape[0] - 1) / 2])
+    a = math.radians(ang)
+    R2 = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    if mirror:
+        R2 = R2 @ np.diag([-1.0, 1.0])
+    ct = np.array([(side - 1) / 2, (side - 1) / 2])
+    T = np.hstack([R2, (ct - R2 @ cs)[:, None]])
+    tpl = cv2.warpAffine(sn, T, (side, side), flags=cv2.INTER_LINEAR)
+    return np.where(circle, tpl, 0).astype(np.float32), dict(km=km, angle=ang, mirror=mirror, R2=R2, cs=cs, ct=ct, sxy=(sx, sy))
+
+
+def work_reference(lat0, lon0, sun, relief, ref, work_km):
+    """The Earth-facing hemisphere as it looked, at work_km per px: (normalised image, geometry of it)."""
     Rw = R_MOON / work_km
     size = int(2 * Rw * 1.02) + 8
     c = (size - 1) / 2
-    A = Rw * np.array([[1.0, 0], [0, -1.0]])
-    geo_w = Geometry(lat0, lon0, A, [c, c])
+    geo_w = Geometry(lat0, lon0, Rw * np.array([[1.0, 0], [0, -1.0]]), [c, c])
     rimg, ok = render_shaded(geo_w, size, size, relief, ref, sun)
     rn = normalise(rimg, 3)
     rn[~ok] = 0
-    H, W = gray.shape
+    return rn, geo_w
+
+
+def distinct(cands, keep, dist):
+    """The best `keep` of cands that are distinct places (neighbouring angles are one candidate)."""
+    cands = sorted(cands, key=lambda cc: -cc['score'])
+    out = []
+    for cc in cands:
+        if all(math.hypot(cc['tl'][0] - o['tl'][0], cc['tl'][1] - o['tl'][1]) > dist or cc['mirror'] != o['mirror'] for o in out):
+            out.append(cc)
+        if len(out) >= keep:
+            break
+    return out
+
+
+def blind_search_full(gray, km_list, lat0, lon0, sun, relief, ref, log, work_km=2.4, angle_step=4, keep=12):
+    """Every view at work_km and angle_step against the whole hemisphere: candidates (score, km_per_px, angle, mirror,
+    ref centre px) of the close-up. Thorough and slow (reference for blind_search)."""
+    rn, geo_w = work_reference(lat0, lon0, sun, relief, ref, work_km)
     cands = []
     t0 = time.perf_counter()
     n_total = len(km_list) * 2 * (360 // angle_step)
     done = 0
     for km in km_list:
-        k = km / work_km                                 # image px -> work px
-        small, (sx, sy) = resize(gray, k)
-        side = int(0.9 * min(small.shape))
-        if side < 48:
-            done += 2 * (360 // angle_step)
-            continue
-        sn = normalise(small, 3)
-        r = side / 2
-        yy, xx = np.mgrid[0:side, 0:side]
-        circle = ((xx - (side - 1) / 2) ** 2 + (yy - (side - 1) / 2) ** 2) < r * r
-        cs = np.array([(small.shape[1] - 1) / 2, (small.shape[0] - 1) / 2])
         for mirror in (False, True):
             for ang in range(0, 360, angle_step):
-                a = math.radians(ang)
-                R2 = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
-                if mirror:
-                    R2 = R2 @ np.diag([-1.0, 1.0])
-                ct = np.array([(side - 1) / 2, (side - 1) / 2])
-                T = np.hstack([R2, (ct - R2 @ cs)[:, None]])
-                tpl = cv2.warpAffine(sn, T, (side, side), flags=cv2.INTER_LINEAR)
-                tpl = np.where(circle, tpl, 0).astype(np.float32)
-                res = cv2.matchTemplate(rn, tpl, cv2.TM_CCOEFF_NORMED)
-                _, mx, _, (px, py) = cv2.minMaxLoc(res)
-                cands.append(dict(score=float(mx), km=km, angle=ang, mirror=mirror, tl=(px, py), R2=R2, cs=cs, ct=ct,
-                                  sxy=(sx, sy)))
+                v = view_template(gray, km, work_km, ang, mirror)
+                if v is None:
+                    done += 1
+                    continue
+                tpl, meta = v
+                _, mx, _, tl = cv2.minMaxLoc(cv2.matchTemplate(rn, tpl, cv2.TM_CCOEFF_NORMED))
+                cands.append(dict(meta, score=float(mx), tl=tl))
                 done += 1
             log(f'  search: {done}/{n_total} views ({km:.3f} km/px, {"mirrored" if mirror else "not mirrored"}), '
-                f'best so far {max(cc["score"] for cc in cands):.3f}, {time.perf_counter() - t0:.0f} s')
-    cands.sort(key=lambda cc: -cc['score'])
-    out = []                                              # distinct places (neighbouring angles are one candidate)
-    for cc in cands:
-        if all(math.hypot(cc['tl'][0] - o['tl'][0], cc['tl'][1] - o['tl'][1]) > 20 or cc['mirror'] != o['mirror'] for o in out):
-            out.append(cc)
-        if len(out) >= keep:
-            break
-    return out, geo_w
+                f'best so far {max((cc["score"] for cc in cands), default=0):.3f}, {time.perf_counter() - t0:.0f} s')
+    return distinct(cands, keep, 20), geo_w
+
+
+def blind_search(gray, km_list, lat0, lon0, sun, relief, ref, log, work_km=2.4, angle_step=4, keep=12,
+                 coarse_km=4.8, coarse_step=4, coarse_keep=30, fine_step=1, pad=24):
+    """Coarse to fine. Pass 1: every view against the hemisphere at coarse_km per px (a quarter of the pixels) in
+    coarse_step° turns, which keeps coarse_keep distinct places. Pass 2: each of those at work_km, only in a window
+    around where it was found, turned by ±coarse_step° in fine_step° steps. About three times faster than
+    blind_search_full, and it finds the place at a finer angle than that one's angle_step.
+    Candidates as blind_search_full's, at work_km (solve_hit needs that resolution)."""
+    t0 = time.perf_counter()
+    rc, geo_c = work_reference(lat0, lon0, sun, relief, ref, coarse_km)
+    coarse = []
+    n_total = len(km_list) * 2 * (360 // coarse_step)
+    done = 0
+    for km in km_list:
+        for mirror in (False, True):
+            for ang in range(0, 360, coarse_step):
+                done += 1
+                v = view_template(gray, km, coarse_km, ang, mirror)
+                if v is None:
+                    continue
+                tpl, meta = v
+                _, mx, _, tl = cv2.minMaxLoc(cv2.matchTemplate(rc, tpl, cv2.TM_CCOEFF_NORMED))
+                coarse.append(dict(meta, score=float(mx), tl=tl))
+            log(f'  search: {done}/{n_total} coarse views ({km:.3f} km/px, {"mirrored" if mirror else "not mirrored"}), '
+                f'best so far {max((cc["score"] for cc in coarse), default=0):.3f}, {time.perf_counter() - t0:.0f} s')
+    places = distinct(coarse, coarse_keep, 10)
+    rn, geo_w = work_reference(lat0, lon0, sun, relief, ref, work_km)
+    k = coarse_km / work_km
+    fine = []
+    for i, c in enumerate(places):
+        for ang in np.arange(c['angle'] - coarse_step, c['angle'] + coarse_step + 1e-9, fine_step):
+            v = view_template(gray, c['km'], work_km, float(ang) % 360, c['mirror'])
+            if v is None:
+                continue
+            tpl, meta = v
+            side = tpl.shape[0]
+            x0, y0 = max(0, int(round(c['tl'][0] * k)) - pad), max(0, int(round(c['tl'][1] * k)) - pad)
+            win = rn[y0:y0 + side + 2 * pad, x0:x0 + side + 2 * pad]
+            if win.shape[0] < side or win.shape[1] < side:
+                continue
+            _, mx, _, (px, py) = cv2.minMaxLoc(cv2.matchTemplate(win, tpl, cv2.TM_CCOEFF_NORMED))
+            fine.append(dict(meta, score=float(mx), tl=(px + x0, py + y0)))
+        if (i + 1) % 10 == 0 or i + 1 == len(places):
+            log(f'  search: refined {i + 1}/{len(places)} places, best {max((cc["score"] for cc in fine), default=0):.3f}, '
+                f'{time.perf_counter() - t0:.0f} s')
+    return distinct(fine, keep, 20), geo_w
 
 
 def solve_hit(c, geo_w):

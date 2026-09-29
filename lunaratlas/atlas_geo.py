@@ -5,16 +5,20 @@ point (lat0, lon0) -> 2x2 affine + offset into image pixels -> smooth polynomial
 (stitching / refraction residue). Found automatically by matching the image against the LROC
 WAC 643 nm normalized-albedo map rendered in the same geometry.
 """
+import hashlib
 import json
 import math
 import os
 import time
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from atlas_paths import DATA  # noqa: E402  (lunaratlas/data, or the app's data folder)
+from atlas_paths import DATA, publish, temp_beside  # noqa: E402  (lunaratlas/data, or the app's data folder)
 R_MOON = 1737.4           # km
 DIST = 221.0              # Earth-Moon distance in lunar radii (perspective; 205-234 over the orbit)
 PPD = 64                  # reference map pixels per degree
@@ -22,6 +26,12 @@ SIDECAR_SCHEMA = 'lunaratlas.geo/1'
 OLD_SCHEMAS = ('moon_atlas.geo/1',)       # the same format, written before the rename; still read
 REF_TILES = {'E300N3150': (0, 0), 'E300N0450': (0, 90), 'E300S3150': (60, 0), 'E300S0450': (60, 90)}
 REF_URL = 'https://pds.lroc.im-ldi.com/data/LRO-L-LROC-5-RDR-V1.0/LROLRC_2001/EXTRAS/BROWSE/WAC_EMP'
+DOWNLOAD_HOSTS = {'pds.lroc.im-ldi.com', 'pds-geosciences.wustl.edu', 'asc-planetarynames-data.s3.us-west-2.amazonaws.com',
+                  'api.github.com', 'raw.githubusercontent.com'}                       # the only hosts anything is fetched from
+REF_SHA256 = {'E300N3150': '422615a7d4e7707f8be828a3a5b05797d5fbdaf93a374405f2e308aff2c16651',      # fixed archive products:
+              'E300N0450': 'aef55c19918daa8b96bcf045b75f589222b0940e0634500decc028776e1d8bbb',
+              'E300S3150': '6536e4fa9c3388b095b79bdc030f996df47998e6a870c9aa1a4056f6b103e016',      # anything else is refused
+              'E300S0450': '1be84f5edd067d8d8d9ecf34a2ab2bdeb405a61652bc8ac26bbb3aa5073f8ad4'}
 
 
 # ---------------------------------------------------------------- sphere and projection
@@ -177,27 +187,63 @@ def similarity(cx, cy, R, theta_deg, mirror):
 
 
 # ---------------------------------------------------------------- reference map
-def download(url, dest, valid, timeout=60, log=None):
-    """url -> dest through a temporary file: dest only ever appears complete and accepted by valid(path).
+class _HttpsOnly(urllib.request.HTTPRedirectHandler):
+    """A download that starts on https never continues on http (or ftp): a redirect off TLS is refused."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.lower().startswith('https://'):
+            raise urllib.error.URLError(f'refusing a redirect to {newurl.split(":", 1)[0]}: only https')
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+urllib.request.install_opener(urllib.request.build_opener(_HttpsOnly))       # for every urlopen of this program
+
+
+def https_open(url, timeout=60):
+    """urlopen for an https URL from a host this program downloads from, and only https on any redirect."""
+    u = urlsplit(url)
+    if u.scheme.lower() != 'https':
+        raise urllib.error.URLError(f'refusing {u.scheme or "a URL without a scheme"}: only https')
+    if (u.hostname or '').lower() not in DOWNLOAD_HOSTS:
+        raise urllib.error.URLError(f'refusing {u.hostname}: not a host LunarAtlas downloads from')
+    return urllib.request.urlopen(url, timeout=timeout)
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def download(url, dest, valid, timeout=60, log=None, sha256=None, max_bytes=None):
+    """url (https only) -> dest through a temporary file: dest only ever appears complete and accepted by valid(path).
+    sha256: the digest the file must have (a fixed product); max_bytes: more than that is refused as it arrives.
     With log, a line 'downloaded A of B MB' about every second (the app's progress bar reads it)."""
-    import urllib.request
-    tmp = dest + '.part'
+    tmp = temp_beside(dest, '.part')
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r, open(tmp, 'wb') as fh:
+        with https_open(url, timeout) as r, open(tmp, 'wb') as fh:
             hdr = getattr(r, 'headers', None)
             total, got, shown = int((hdr.get('Content-Length') if hdr else 0) or 0), 0, 0.0
+            if max_bytes and total > max_bytes:
+                raise SystemExit(f'download of {url} is larger than expected ({total / 1e6:.0f} MB); not taken')
             while True:
                 chunk = r.read(1 << 20)
                 if not chunk:
                     break
                 fh.write(chunk)
                 got += len(chunk)
+                if max_bytes and got > max_bytes:
+                    raise SystemExit(f'download of {url} is larger than expected; not taken')
                 if log and total and (time.monotonic() - shown > 1 or got == total):
                     shown = time.monotonic()
                     log(f'  downloaded {got / 1e6:.1f} of {total / 1e6:.1f} MB')
+        if sha256 and sha256_file(tmp) != sha256:
+            raise SystemExit(f'download of {url} is not the file this version expects (checksum differs); not taken')
         if not valid(tmp):
             raise SystemExit(f'download of {url} is damaged; try again')
-        os.replace(tmp, dest)
+        publish(tmp, dest)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -206,16 +252,16 @@ def download(url, dest, valid, timeout=60, log=None):
 def write_atomic(path, write):
     """write(tmp_path) then rename over path, so an interrupted write never leaves a damaged file.
     A write that cannot happen at all (a read-only folder, a full disk) is a clear message, not a traceback."""
-    root, ext = os.path.splitext(path)
-    tmp = f'{root}.part{ext}'                    # keeps the extension: cv2.imwrite picks the encoder from it
+    tmp = None
     try:
         try:
+            tmp = temp_beside(path)              # keeps the extension: cv2.imwrite picks the encoder from it
             write(tmp)
-            os.replace(tmp, path)
+            publish(tmp, path)
         except OSError as e:
             raise SystemExit(f'cannot write {path}: {e.strerror or e}') from None
     finally:
-        if os.path.exists(tmp):
+        if tmp and os.path.exists(tmp):
             try:
                 os.remove(tmp)
             except OSError:
@@ -256,7 +302,8 @@ class Reference:
             if im is None:
                 log(f'downloading reference tile {t} (≈ 22 MB, once)' if not os.path.exists(f) else
                     f'reference tile {t} is damaged: downloading it again')
-                download(f'{REF_URL}/WAC_EMP_643NM_{t}_064P.TIF', f, lambda p: cls._tile(p) is not None, log=log)
+                download(f'{REF_URL}/WAC_EMP_643NM_{t}_064P.TIF', f, lambda p: cls._tile(p) is not None, log=log,
+                         sha256=REF_SHA256[t], max_bytes=30_000_000)
                 im = cls._tile(f)
             ref[r * PPD:(r + 60) * PPD, c * PPD:(c + 90) * PPD] = im
         return ref
@@ -704,6 +751,23 @@ def north_up_matrix(geo):
     mirror = bool((R @ geo.A @ np.array([1.0, 0.0]))[0] < 0)
     M = (np.diag([-1.0, 1.0]) if mirror else np.eye(2)) @ R
     return M, math.degrees(rot), mirror
+
+
+def north_up(raw, geo):
+    """(the image turned so lunar north is up and east right, never mirrored; its geometry; the map of the old pixel
+    positions onto the new ones as (M, b): new = M @ old + b). The canvas grows to hold the turned picture: the corners
+    of a turn by other than a right angle are black."""
+    M, _, _ = north_up_matrix(geo)
+    h, w = raw.shape[:2]
+    corners = np.array([[-0.5, -0.5], [w - 0.5, -0.5], [w - 0.5, h - 0.5], [-0.5, h - 0.5]]) @ M.T
+    lo, hi = corners.min(0), corners.max(0)
+    b = -0.5 - lo
+    nw, nh = int(math.ceil(hi[0] - lo[0] - 1e-6)), int(math.ceil(hi[1] - lo[1] - 1e-6))
+    turned = cv2.warpAffine(raw, np.hstack([M, b[:, None]]), (nw, nh), flags=cv2.INTER_LANCZOS4,
+                            borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    new = Geometry(geo.lat0, geo.lon0, M @ geo.A, M @ geo.t + b, None if geo.coef is None else geo.coef @ M.T,
+                   geo.deg, geo.rmax, geo.dist)
+    return turned, new, (M, b)
 
 
 # ---------------------------------------------------------------- sidecar
