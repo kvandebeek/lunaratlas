@@ -370,6 +370,48 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         self.assertTrue(all(w == '100 900' for _, w, _ in files))
 
     @S.needs_all
+    def test_a_cache_missing_a_tile_is_built_again(self):
+        img, geo = S.moon_image(self.tmp, name='cached.tif')
+        raw = cv2.imread(img, cv2.IMREAD_UNCHANGED)
+        levels = av.build_tiles(img, raw, S.quiet)
+        tile = os.path.join(av.tile_dir(img), '0', '0_0.jpg')
+        os.remove(tile)
+        msgs = []
+        self.assertEqual(av.build_tiles(img, raw, msgs.append), levels)
+        self.assertTrue(os.path.getsize(tile) > 0, 'the tile is back')
+        self.assertTrue(any('incomplete' in m for m in msgs), msgs)
+        open(tile, 'w').close()                                     # an empty file is no tile either
+        av.build_tiles(img, raw, S.quiet)
+        self.assertTrue(os.path.getsize(tile) > 0)
+
+    def test_a_pyramid_with_a_tile_that_could_not_be_written_has_no_manifest(self):
+        from unittest import mock
+        img, geo = S.moon_image(self.tmp, name='full.tif')
+        raw = cv2.imread(img, cv2.IMREAD_UNCHANGED)
+        real = cv2.imwrite
+        with mock.patch.object(av.cv2, 'imwrite', lambda p, *a: False if p.endswith('1_0.jpg') else real(p, *a)):
+            with self.assertRaises(SystemExit) as cm:
+                av.build_tiles(img, raw, S.quiet)
+        self.assertIn('could not be written', str(cm.exception))
+        self.assertFalse(os.path.exists(os.path.join(av.tile_dir(img), 'meta.json')), 'no manifest for a pyramid with holes')
+
+    def test_opening_an_image_again_does_not_decode_it(self):
+        from unittest import mock
+        img, geo = S.moon_image(self.tmp, name='again.tif')
+        side = S.sidecar(img)
+        first = av.Session(img, geo, side, None, S.quiet)              # the first open reads the file
+        reads = []
+        real = cv2.imread
+        with mock.patch.object(av.cv2, 'imread', lambda p, *a: reads.append(p) or real(p, *a)):
+            again = av.Session(img, geo, side, None, S.quiet)
+        self.assertEqual(reads, [], 'tiles and night side come from the cache: the pixels are not read')
+        self.assertEqual(again.data['features'], first.data['features'])
+        self.assertEqual((again.data['width'], again.data['height']), (1100, 1000))
+        geo2 = ag.Geometry(geo.lat0 + 1.0, geo.lon0, geo.A, geo.t)     # another positioning: the night side is worked out again
+        with mock.patch.object(av.cv2, 'imread', lambda p, *a: reads.append(p) or real(p, *a)):
+            av.Session(img, geo2, side, None, S.quiet)
+        self.assertEqual(len(reads), 1)
+
     def test_page_data(self):
         img, geo = S.moon_image(self.tmp)
         raw = cv2.imread(img, -1)
@@ -481,10 +523,9 @@ class Settings(S.TempDir, unittest.TestCase):
         self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 1500.0)
         self.assertEqual(ts.get('LUNARATLAS_NIGHT'), 'dim')
 
-    @unittest.expectedFailure
     def test_utf8_bom(self):
-        # known issue: a .env saved as "UTF-8 with BOM" (Windows PowerShell 5 `Out-File -Encoding utf8`, older Notepad)
-        # loses its first setting ("unknown setting ﻿LUNARATLAS_…"); reading with encoding='utf-8-sig' fixes it
+        # a .env saved as "UTF-8 with BOM" (Windows PowerShell 5 `Out-File -Encoding utf8`, older Notepad) applies
+        # every setting, the first one too
         err = self.env_file(b'\xef\xbb\xbfLUNARATLAS_FOCAL_MM=1500\nLUNARATLAS_NIGHT=dim\n')
         self.assertEqual(err, '')
         self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 1500.0)

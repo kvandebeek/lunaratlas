@@ -70,7 +70,7 @@ Measured on 5 of the user's close-ups and one close-up mosaic: all found correct
 Per-machine settings live in `.env` in the repository root, which is not committed; `.env.example` lists every key with its default. The same file serves lunaratlas, lunar_finish and mosaic_builder.
 - **lunaratlas:** observing site, equipment (telescope, focal length, extenders, cameras), export defaults (font, detail level, label size, night side, JPEG quality) and the viewer port.
 
-Command-line options override `.env`; environment variables of the same name override the file; `--help` shows the value in effect. All 60 settings are declared once in `tool_settings.py`, with their type, default and range. `.env.example` is generated from there (`python3 tool_settings.py --example`), so its documented ranges are the enforced ones. `python3 tool_settings.py --check` shows the value in effect for every setting and reports out-of-range values and unknown keys, which fall back to the default. On/off settings have both forms on the command line, for example `--rims` / `--no-rims`.
+Command-line options override `.env`; environment variables of the same name override the file; `--help` shows the value in effect. All 60 settings are declared once in `tool_settings.py`, with their type, default and range. A `.env` saved by Windows as UTF-8 with a byte-order mark is read correctly. `.env.example` is generated from there (`python3 tool_settings.py --example`), so its documented ranges are the enforced ones. `python3 tool_settings.py --check` shows the value in effect for every setting and reports out-of-range values and unknown keys, which fall back to the default. On/off settings have both forms on the command line, for example `--rims` / `--no-rims`.
 
 ## Export
 
@@ -80,6 +80,7 @@ Command-line options override `.env`; environment variables of the same name ove
 --layers area,crater,lettered,relief,landing|none    --no-rims  --no-lettered  --no-landing
 --no-grid  --no-drawings  --no-info                  --quality Q (JPEG)  --force
 --north-up               --around NAME --fit         --time YYYY-MM-DDTHH:MM (UTC, if it must be located)
+--overwrite  (with -o: replace a file that is already there; the default name is always replaced)
 ```
 
 `--north-up` turns the picture (and the drawings and moved names with it) so lunar north is up and east is right, never mirrored. Turning by other than a right angle makes the canvas larger; its corners are black. It works on the whole picture or with `--around`; `--region` counts pixels of the picture as it was taken and is refused with it. The viewer's export dialog has the same choice.
@@ -117,6 +118,7 @@ On close-ups, night-side names are hidden by the Sun's elevation at the capture 
 ## Viewer (`view`)
 
 A local server on 127.0.0.1 opens the page in the browser.
+- **Opening again is quick:** the tile pyramid (checked tile by tile, and built again if some are missing) and the night side of every name are kept in the cache folder, so the photo is not decoded again, which matters for 200 MP mosaics.
 - **Tiles** are cached in `~/Library/Caches/LunarAtlas` (Windows `%LOCALAPPDATA%\LunarAtlas\Cache`, Linux
   `~/.cache/lunaratlas`) and rebuilt when the image changes.
 - **Only this machine, and only its own page:** requests with a foreign `Host` (DNS rebinding), another site's `Origin` or `Sec-Fetch-Site` (a script or image include, a frame), or without this run's token are refused; only GET and POST are answered. The token is made at every start; the address the browser is sent to carries it once and it is then kept in an HttpOnly, SameSite=Strict cookie (`lunaratlas.py view --no-open` prints that address, `--open` sends the browser to it and prints none). `LUNARATLAS_TOKEN` sets a token instead (for scripts and tests). Pages get a strict Content-Security-Policy (no inline script, no framing), the page data is JSON that the page fetches (`/data.json`; it does not name your account), and request bodies, uploads and drawings have size limits.
@@ -128,7 +130,7 @@ A local server on 127.0.0.1 opens the page in the browser.
   again, or Alt-drag a box around an area. Delete (or the Hide button) hides them all in one undo step; Esc clears.
 - **Editing:** drag drawings and their square handles; drag a name to move it, and recolour or resize it in its card; undo and redo with ⌘Z and ⇧⌘Z.
 - **Fonts:** IBM Plex Sans, Source Sans 3 and Roboto, bundled with the app (lunaratlas/fonts, SIL Open Font License): nothing is downloaded. `--font` still accepts any Google Fonts family, downloaded once.
-- **Saving:** edits are stored in `IMAGE.atlas.json` under `edits`.
+- **Saving:** edits are stored in `IMAGE.atlas.json` under `edits`, a moment after each change. Saves go one after the other, are numbered (a late one never replaces a newer one), and are sent again when the page is left, reloaded or closed, or "Other image" is used. Export first saves; if the drawings cannot be saved it does not start and says why.
 - **Export:** the Export button runs the real export, with progress and a button that shows the result in
   the desktop file manager (Finder, Explorer, or whatever `xdg-open` picks).
 
@@ -139,7 +141,7 @@ locate (with its log on the page), then the viewer on the same server, with its 
 image", goes back.
 - **Work folder:** a browser gives the page a file's contents, not its path, so the photo is copied into
   `~/Pictures/LunarAtlas` (or `~/LunarAtlas`; `--folder` to change). Its sidecar and exports land next to the copy.
-  The same photo again is recognised by name and size and opens at once; earlier photos are listed on the page.
+  The same photo again (the same bytes, not just the same name and size) is recognised and opens at once; a different photo of the same name gets a copy of its own (`NAME (2).tif`) and the earlier one is left alone. Earlier photos are listed on the page.
 - **Capture time:** when the name has no SharpCap/WinJUPOS time, the page asks for it (local time; optional for full
   disks, needed for close-ups) and puts it in front of the copy's name, so every later step finds it.
 - **Refused photos:** a quality-gate refusal shows its reasons and an "Annotate anyway" button (`--force`).

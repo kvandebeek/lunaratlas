@@ -174,7 +174,7 @@ class ExportOptions(S.TempDir, unittest.TestCase):
 
     def test_nothing_is_given_means_a_plain_tiff_next_to_the_image(self):
         self.assertEqual(self.args(), ['export', self.IMG, '--format', 'tiff', '--layers', 'none',
-                                       '-o', '/x/moon_atlas.tif'])
+                                       '--overwrite', '-o', '/x/moon_atlas.tif'])
         self.assertEqual(self.args(format='png')[-1], '/x/moon_atlas.png')
         self.assertEqual(self.args(format='jpg')[-1], '/x/moon_atlas.jpg')
 

@@ -69,7 +69,9 @@ three are bundled with the app, so nothing is downloaded.
 
 ## Regenerating
 
-With the app running on a work folder (`python3 lunaratlas/lunaratlas.py app --no-open --no-window --port 8791
---folder FOLDER`), `node design/shoot.mjs http://localhost:8791 OUT_DIR FOLDER` drives Chrome through every screen. It
+With the app running on a work folder and a token of your choosing (`LUNARATLAS_TOKEN=shoot python3
+lunaratlas/lunaratlas.py app --no-open --no-window --port 8791 --folder FOLDER`), `LUNARATLAS_TOKEN=shoot node
+design/shoot.mjs http://localhost:8791 OUT_DIR FOLDER` drives Chrome through every screen, over a pipe rather than a
+debugging port, so nothing else on the machine can attach to it. It
 needs Chrome and Node 22 or newer, and no packages. It expects the photo names used here, so adjust them for other
 photos.

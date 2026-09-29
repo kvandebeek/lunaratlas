@@ -82,25 +82,49 @@
   function restore(json) { const o = JSON.parse(json); E.shapes = o.shapes; E.labels = o.labels; hiddenSet = new Set(o.hidden); save(); redraw(); }
   function doUndo() { if (!undo.length) { toast('Nothing to undo'); return; } closeEditor(true); redo.push(snap()); restore(undo.pop()); if (selected) select(selected); toast('Undone'); }
   function doRedo() { if (!redo.length) { toast('Nothing to redo'); return; } closeEditor(true); undo.push(snap()); restore(redo.pop()); if (selected) select(selected); toast('Redone'); }
-  let saveT = null;
+  let saveT = null, dirty = false, inflight = 0, chain = Promise.resolve();
+  let rev = Date.now();                       // every save is numbered (later than any earlier page's): the server drops a late one
   function body() {
     E.hidden = [...hiddenSet];
     E.style = { font: set.font, minPx: set.minPx, fs: set.fs, night: set.night, grid: set.grid, rims: set.rims,
                 layers: LAYERS5.filter((l) => set[l]) };
-    return JSON.stringify(E);
+    return JSON.stringify({ ...E, rev: ++rev });
   }
+  // One save after the other, each with the edits as they are when it starts. Rejects when the edits could not be saved.
   function post() {
-    return fetch('/edits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body() })
-      .then((r) => { if (!r.ok) throw new Error(r.status); $('#saveState').textContent = 'saved'; })
-      .catch(() => { $('#saveState').textContent = 'not saved — is lunaratlas view still running?'; });
+    const send = () => {
+      dirty = false; inflight++;
+      return fetch('/edits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body() })
+        .finally(() => { inflight--; })
+        .then((r) => { if (!r.ok && r.status !== 409) throw new Error(r.status); $('#saveState').textContent = 'saved'; })   // 409: a newer one is there
+        .catch((e) => { dirty = true; $('#saveState').textContent = 'not saved — is lunaratlas view still running?'; throw e; });
+    };
+    const p = chain.then(send, send);
+    chain = p.catch(() => {});
+    return p;
   }
   function save() {
     $('#n-mine').textContent = E.shapes.length;
     $('#saveState').textContent = 'saving…';
+    dirty = true;
     clearTimeout(saveT);
-    saveT = setTimeout(post, 300);
+    saveT = setTimeout(() => { saveT = null; post().catch(() => {}); }, 300);
   }
-  const flush = () => { clearTimeout(saveT); return post(); };
+  const flush = () => { clearTimeout(saveT); saveT = null; return post(); };
+  // Leaving the page (a reload, a closed tab, the link to the launcher) must not lose an edit still waiting for its timer.
+  // The request sent while leaving may still be on its way when the page loads again: the edits are also kept here, and
+  // the next load takes them up (and saves them again, which is harmless when the server has them already).
+  const PENDING = 'lunaratlas.pending.' + A.tiles_v;
+  function leave() {
+    if (!dirty && !saveT && !inflight) return;                        // a save still on its way may be cut off by the leaving
+    clearTimeout(saveT); saveT = null; dirty = false;
+    const b = body();
+    try { localStorage.setItem(PENDING, b); } catch { /* no storage: the request below is all there is */ }
+    try { fetch('/edits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: b, keepalive: b.length < 60000 }).catch(() => {}); } catch { /* too large to send while leaving */ }
+  }
+  addEventListener('pagehide', leave);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') leave(); });
+  $('#otherImage').addEventListener('click', (e) => { e.preventDefault(); const go = () => { location.href = '/app'; }; flush().then(go, go); });
 
   // ------------------------------------------------------------ features
   const FE = A.features;
@@ -119,12 +143,16 @@
 
   // ------------------------------------------------------------ tiles
   const LV = A.levels, TILE = A.tile, cache = new Map();
+  let loadingTiles = 0, tilesIdle = null;
+  function tileDone() { if (--loadingTiles <= 0) { loadingTiles = 0; const f = tilesIdle; tilesIdle = null; if (f) f(); } }
   function tile(l, c, r) {
     const k = l + '/' + c + '_' + r;
     let im = cache.get(k);
     if (!im) {
       im = new Image();
-      im.onload = () => { im.ok = true; redraw(); };
+      loadingTiles++;
+      im.onload = () => { im.ok = true; tileDone(); redraw(); };
+      im.onerror = tileDone;
       im.src = '/tiles/' + k + '.jpg?v=' + A.tiles_v;      // per image: the browser keeps tiles for a day
       cache.set(k, im);
       if (cache.size > 900) { const first = cache.keys().next().value; cache.delete(first); }
@@ -1055,7 +1083,9 @@
     el.onclick = (e) => { if (e.target === el && !jobRunning) el.hidden = true; };
     $('#xReveal').onclick = () => fetch('/reveal', { method: 'POST', body: '{}' });
     $('#xGo').onclick = async () => {
-      await flush();                               // the export reads the drawings from the sidecar
+      try { await flush(); } catch {                // the export reads the drawings from the sidecar: not saved, it would leave them out
+        toast('Your drawings could not be saved, so the export was not started. Is LunarAtlas still running?'); return;
+      }
       const r = await fetch('/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts()) });
       const j = await r.json();
       if (!r.ok) { toast(j.error || 'Export could not start'); return; }
@@ -1111,7 +1141,11 @@
   let prevT = null;
   function schedulePreview(box, outScale, o) {
     clearTimeout(prevT);
-    prevT = setTimeout(() => { renderPreview(box, outScale, o); prevT = setTimeout(() => renderPreview(box, outScale, o), 600); }, 30);
+    tilesIdle = null;
+    prevT = setTimeout(() => {
+      renderPreview(box, outScale, o);                                   // once; again only when a tile it wanted has arrived
+      tilesIdle = loadingTiles ? () => renderPreview(box, outScale, o) : null;
+    }, 30);
   }
   function renderPreview(box, outScale, o) {
     const cv = $('#xPrev'); if (!cv) return;
@@ -1170,6 +1204,11 @@
   resize();
   showGate();
   fetch('/edits').then((r) => r.json()).then((e) => {
+    try {
+      const p = JSON.parse(localStorage.getItem(PENDING) || 'null');
+      localStorage.removeItem(PENDING);
+      if (p && Array.isArray(p.shapes)) { e = p; setTimeout(save, 0); }
+    } catch { /* no storage */ }
     E = { shapes: Array.isArray(e.shapes) ? e.shapes : [], hidden: [], labels: e.labels || {}, style: e.style || {} };
     hiddenSet = new Set(Array.isArray(e.hidden) ? e.hidden : []);
     applyStyle(E.style); syncLettered();

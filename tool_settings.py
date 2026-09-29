@@ -144,7 +144,7 @@ def _read():
     if _raw is None:
         raw = {}
         try:
-            with open(os.path.join(ENV_DIR or ROOT, '.env'), encoding='utf-8') as fh:
+            with open(os.path.join(ENV_DIR or ROOT, '.env'), encoding='utf-8-sig') as fh:
                 for line in fh:
                     line = line.split('#', 1)[0].strip()
                     if '=' in line:

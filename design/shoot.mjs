@@ -1,5 +1,5 @@
 // Screenshots of every LunarAtlas screen and state, via the Chrome DevTools protocol (no packages: Node's WebSocket).
-// node shoot.mjs BASE_URL OUT_DIR WORK_FOLDER
+// LUNARATLAS_TOKEN=any-secret node shoot.mjs BASE_URL OUT_DIR WORK_FOLDER   (the app started with the same LUNARATLAS_TOKEN)
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -7,31 +7,40 @@ import { join } from 'node:path';
 const [BASE, OUT, WORK] = process.argv.slice(2);
 mkdirSync(OUT, { recursive: true });
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const PORT = 9337, PROFILE = join(OUT, '..', 'chrome-profile');
+const PROFILE = join(OUT, '..', 'chrome-profile');
 rmSync(PROFILE, { recursive: true, force: true });
-const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, '--no-first-run',
-  '--hide-scrollbars', '--force-color-profile=srgb', '--window-size=1440,900', 'about:blank'], { stdio: 'ignore' });
+// The browser is driven through a pipe (--remote-debugging-pipe): unlike a debugging port, nothing else on the machine
+// can attach to it while the screenshots are taken. Messages are JSON ended by a NUL byte, fd 3 in and fd 4 out.
+const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-pipe', `--user-data-dir=${PROFILE}`, '--no-first-run',
+  '--hide-scrollbars', '--force-color-profile=srgb', '--window-size=1440,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let ws, seq = 0;
+let seq = 0, session;
 const pending = new Map(), listeners = [];
-async function connect() {
-  for (let i = 0; i < 50; i++) {
-    try {
-      const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-      const page = list.find((t) => t.type === 'page');
-      if (page) { ws = new WebSocket(page.webSocketDebuggerUrl); break; }
-    } catch (e) { /* not up yet */ }
-    await sleep(200);
-  }
-  await new Promise((r) => ws.addEventListener('open', r));
-  ws.addEventListener('message', (m) => {
-    const d = JSON.parse(m.data);
-    if (d.id && pending.has(d.id)) { const { res, rej } = pending.get(d.id); pending.delete(d.id); d.error ? rej(new Error(d.error.message)) : res(d.result); }
-    else for (const l of listeners) l(d);
-  });
+function receive(d) {
+  if (d.id && pending.has(d.id)) { const { res, rej } = pending.get(d.id); pending.delete(d.id); d.error ? rej(new Error(d.error.message)) : res(d.result); }
+  else if (!d.sessionId || d.sessionId === session) for (const l of listeners) l(d);
 }
-const send = (method, params = {}) => new Promise((res, rej) => { const id = ++seq; pending.set(id, { res, rej }); ws.send(JSON.stringify({ id, method, params })); });
+let buf = '';
+chrome.stdio[4].setEncoding('utf8');
+chrome.stdio[4].on('data', (chunk) => {
+  buf += chunk;
+  for (let i; (i = buf.indexOf('\0')) >= 0;) { const m = buf.slice(0, i); buf = buf.slice(i + 1); if (m) receive(JSON.parse(m)); }
+});
+const send = (method, params = {}) => new Promise((res, rej) => {
+  const id = ++seq;
+  pending.set(id, { res, rej });
+  const browserLevel = /^(Browser|Target)\./.test(method);
+  chrome.stdio[3].write(JSON.stringify({ id, method, params, ...(session && !browserLevel ? { sessionId: session } : {}) }) + '\0');
+});
+async function connect() {
+  let page;
+  for (let i = 0; i < 50 && !page; i++) {
+    try { page = (await send('Target.getTargets')).targetInfos.find((t) => t.type === 'page'); } catch (e) { /* not up yet */ }
+    if (!page) await sleep(200);
+  }
+  session = (await send('Target.attachToTarget', { targetId: page.targetId, flatten: true })).sessionId;
+}
 const once = (method) => new Promise((r) => { const l = (d) => { if (d.method === method) { listeners.splice(listeners.indexOf(l), 1); r(d.params); } }; listeners.push(l); });
 async function js(expr) {
   const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
@@ -88,6 +97,7 @@ try {
   await connect();
   await send('Page.enable'); await send('Runtime.enable');
   await size(1440, 900);
+  await go(`/?t=${process.env.LUNARATLAS_TOKEN}`, 300);       // the launcher wants its token: the app was started with this one
 
   // ---------------- home
   await go('/app', 2500);
@@ -177,6 +187,6 @@ try {
   console.error('FAILED', e);
   process.exitCode = 1;
 } finally {
-  ws && ws.close();
+  try { await send('Browser.close'); } catch (e) { /* gone */ }
   chrome.kill();
 }

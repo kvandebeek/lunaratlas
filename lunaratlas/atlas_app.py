@@ -28,7 +28,7 @@ import cv2
 import numpy as np
 
 from atlas_ephem import SHARPCAP
-from atlas_geo import load_geo, sidecar_path
+from atlas_geo import load_geo, sha256_file, sidecar_path
 from atlas_paths import CACHE, private_dir, publish, self_command, temp_beside, user_dir
 from atlas_view import PAGE, ExportJob, Server, Session, reveal, run_server, start_server
 
@@ -150,16 +150,11 @@ class App:
             return h.json(dict(error='not enough free disk space for this image'), 507)
         dest = os.path.join(self.folder, name)
         stem, ext = os.path.splitext(dest)
-        k = 2
-        while os.path.exists(dest) and os.path.getsize(dest) != n:      # same name, other file: keep both
-            dest, k = f'{stem} ({k}){ext}', k + 1
-        if os.path.exists(dest):                                        # the same file again: its sidecar is reused
-            self.drain(h.rfile, n)
-            return h.json(dict(path=dest, located=self.located(dest), name=os.path.basename(dest)))
         try:
             tmp = temp_beside(dest, '.part')
         except OSError as e:
             return h.json(dict(error=f'could not save the image: {e.strerror or e}'), 500)
+        digest = hashlib.sha256()
         try:
             with open(tmp, 'wb') as fh:
                 left = n
@@ -168,24 +163,38 @@ class App:
                     if not chunk:
                         raise OSError('the upload was cut off')
                     fh.write(chunk)
+                    digest.update(chunk)
                     left -= len(chunk)
-            publish(tmp, dest)
+            dest = self.place(tmp, dest, stem, ext, n, digest.hexdigest())
         except OSError as e:
             try:
                 os.remove(tmp)
             except OSError:
                 pass
             return h.json(dict(error=f'could not save the image: {e.strerror or e}'), 500)
+        if dest is None:
+            return h.json(dict(error='not a place in the work folder'), 400)
+        if isinstance(dest, tuple):                                     # the same photo again: its sidecar is reused
+            return h.json(dict(path=dest[0], located=self.located(dest[0]), name=os.path.basename(dest[0])))
         self.log(f'saved {dest}')
         h.json(dict(path=dest, located=False, name=os.path.basename(dest)))
 
-    @staticmethod
-    def drain(f, n):
-        while n > 0:
-            chunk = f.read(min(n, 1 << 20))
-            if not chunk:
-                break
-            n -= len(chunk)
+    def place(self, tmp, dest, stem, ext, size, digest):
+        """The uploaded bytes (in tmp) become dest, or the first "NAME (2)", "NAME (3)"… that is free. A file of that name
+        with the very same bytes is the same photo: tmp is dropped and (its path,) returned, so its sidecar is reused.
+        A different photo of the same name, even of the same size (uncompressed captures of one camera all have one),
+        gets a name of its own and the earlier photo and its positioning stay as they were. None: not inside the folder."""
+        k = 2
+        while True:
+            if os.path.dirname(os.path.realpath(dest)) != os.path.realpath(self.folder):     # a symlink planted here
+                return None
+            if not os.path.lexists(dest):
+                publish(tmp, dest)
+                return dest
+            if os.path.isfile(dest) and os.path.getsize(dest) == size and sha256_file(dest) == digest:
+                os.remove(tmp)
+                return (dest,)
+            dest, k = f'{stem} ({k}){ext}', k + 1
 
     @staticmethod
     def located(path):
@@ -223,12 +232,9 @@ class App:
                 g = side.get('quality_gate')
                 if isinstance(g, dict) and not g.get('ok', True) and not g.get('forced'):
                     raise SystemExit('not annotated: ' + '; '.join(g.get('reasons') or ['the quality gate refused it']))
-                raw = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-                if raw is None:
-                    raise SystemExit(f'cannot read {os.path.basename(path)}')
                 self.say('preparing the viewer')
                 assert self.server is not None
-                self.server.session = Session(path, geo, side, raw, self.say)
+                self.server.session = Session(path, geo, side, None, self.say)       # decodes the photo only for a first open
                 self.phase = 'ready'
             except SystemExit as e:
                 self.phase, self.error = 'failed', str(e)

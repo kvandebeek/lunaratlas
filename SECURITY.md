@@ -21,8 +21,9 @@ LunarAtlas is a desktop app. The parts that matter for security are the small we
 - The token protects against other pages and other users. Something running as *you* can read your files, the state file
   and the token anyway.
 - The gazetteer archive is updated by the USGS, so it is size- and shape-checked rather than pinned.
-- `-o` on the command line replaces an existing file of that name, like any export does; only the input photo and its
-  sidecar are protected.
+- The default export name (`IMAGE_atlas….ext`, and the viewer's Export button) is replaced without asking, so that
+  exporting again updates the last export. A file you name with `-o` is only replaced with `--overwrite`; the input photo
+  and its sidecar are never replaced.
 
 ## Reports
 
@@ -46,4 +47,4 @@ Independent reviews of an earlier state are in `claude-security-findings.md`, `c
 | Inherited `SSL_CERT_FILE` in the packaged app | Fixed |
 | Export `--around` name read as an option | Fixed: `--around=NAME` |
 | Dev screenshot tool opens a DevTools port | Not changed (development only, never shipped); it uses a dedicated profile |
-| `-o` overwrites an existing file | Not changed: re-exporting replaces the last export, which the viewer's Export button relies on |
+| `-o` overwrites an existing file | Fixed: an existing `-o` target needs `--overwrite` (the default name and the viewer's Export still replace their last export) |

@@ -294,6 +294,9 @@ def output_plan(a):
     for keep in (a.image, sidecar_path(a.image)):
         if os.path.exists(out) and os.path.exists(keep) and os.path.samefile(out, keep):
             raise SystemExit(f'refusing to overwrite {keep}: choose another -o')
+    if a.output and os.path.lexists(out) and not getattr(a, 'overwrite', False):
+        raise SystemExit(f'{out} already exists: choose another -o, or add --overwrite to replace it '
+                         '(the default name IMAGE_atlas….ext is replaced without asking)')
     return fmt, out
 
 
@@ -526,10 +529,9 @@ def cmd_view(a):
     from atlas_view import serve
     geo = geometry(a.image, force=a.force, when=when_of(a))
     geo, d = load_geo(a.image)
-    raw = cv2.imread(a.image, cv2.IMREAD_UNCHANGED)
-    if raw is None:
+    if not os.path.isfile(a.image):
         raise SystemExit(f'cannot read {a.image}')
-    serve(os.path.abspath(a.image), geo, d, raw, port=a.port, open_browser=a.open, log=log)
+    serve(os.path.abspath(a.image), geo, d, None, port=a.port, open_browser=a.open, log=log)
 
 
 
@@ -561,6 +563,7 @@ def add_export_options(s, output=True):
     s.add_argument('--info', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_INFO'), help='info block (date, optics, scale bar, north arrow)')
     s.add_argument('--quality', type=int, default=ts.get('LUNARATLAS_JPEG_QUALITY', 92, int), help='JPEG quality')
     s.add_argument('--force', action='store_true', help='annotate even if the quality gate refuses the image')
+    s.add_argument('--overwrite', action='store_true', help='with -o: replace the file if it already exists (the default name is always replaced)')
     s.add_argument('--north-up', action='store_true', help='turn the picture so lunar north is up and east right (never mirrored); with the whole picture or --around')
     s.add_argument('--fit', action='store_true', help='with --around: size the view from the feature\'s own diameter (--size gives the shape)')
 

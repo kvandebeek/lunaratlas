@@ -55,19 +55,44 @@ def tile_version(image):
     return hashlib.sha1(f"{os.path.abspath(image)}|{sig['size_bytes']}|{sig['mtime']}".encode()).hexdigest()[:12]
 
 
-def build_tiles(image, raw, log):
+def as_loader(raw, image):
+    """A function that gives the pixels: raw may be a function already, the array, or None (read the file)."""
+    if raw is None:
+        return lambda: read_image(image)
+    return raw if callable(raw) else (lambda: raw)
+
+
+def tiles_complete(d, levels):
+    """Every tile the manifest lists is there (a cleaned cache folder or a copied one can lose some)."""
+    try:
+        return all(os.path.getsize(os.path.join(d, str(i), f'{c}_{r}.jpg')) > 0
+                   for i, L in enumerate(levels) for r in range(L['rows']) for c in range(L['cols']))
+    except (OSError, KeyError, TypeError):
+        return False
+
+
+def read_image(image):
+    raw = cv2.imread(image, cv2.IMREAD_UNCHANGED)
+    if raw is None:
+        raise SystemExit(f'cannot read {image}')
+    return raw
+
+
+def build_tiles(image, load_raw, log):
     """JPEG pyramid (level 0 = full resolution, each next level half size) in the cache; reused while the image's
-    size and modification time are unchanged."""
+    size and modification time are unchanged and every tile is still there. load_raw() reads the pixels, and is
+    called only when the pyramid has to be built: opening an image again does not decode it."""
     d = tile_dir(image)
     meta_p = os.path.join(d, 'meta.json')
     sig = image_signature(image)
     try:
         with open(meta_p) as fh:
             meta = json.load(fh)
-        if meta.get('signature') == sig and meta.get('tile') == TILE:
+        if meta.get('signature') == sig and meta.get('tile') == TILE and tiles_complete(d, meta.get('levels')):
             log(f'tiles from the cache ({len(meta["levels"])} levels)')
             return meta['levels']
-    except (OSError, ValueError):
+        log('the tile cache is out of date or incomplete: building it again')
+    except (OSError, ValueError, TypeError):
         pass
     if os.path.isdir(d):
         shutil.rmtree(d)
@@ -78,7 +103,9 @@ def build_tiles(image, raw, log):
     except OSError as e:
         raise SystemExit(f'cannot write the tile cache {d}: {e.strerror or e} '
                          '(set HOME to a writable folder, or delete the cache folder)') from None
+    raw = as_loader(load_raw, image)()
     g = raw if raw.ndim == 3 else cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+    del raw
     g = g[..., :3]
     if g.dtype != np.uint8:               # display stretch only (exports keep the original tonality)
         white = float(np.percentile(g[::7, ::7], 99.95))
@@ -95,9 +122,12 @@ def build_tiles(image, raw, log):
             except OSError as e:
                 raise SystemExit(f'cannot write the tile cache {ld}: {e.strerror or e}') from None
             jobs = [(r, c) for r in range(rows) for c in range(cols)]
-            list(ex.map(lambda rc: cv2.imwrite(os.path.join(ld, f'{rc[1]}_{rc[0]}.jpg'),
-                                               g[rc[0] * TILE:(rc[0] + 1) * TILE, rc[1] * TILE:(rc[1] + 1) * TILE],
-                                               [cv2.IMWRITE_JPEG_QUALITY, 86]), jobs))
+            done = list(ex.map(lambda rc: cv2.imwrite(os.path.join(ld, f'{rc[1]}_{rc[0]}.jpg'),
+                                                      g[rc[0] * TILE:(rc[0] + 1) * TILE, rc[1] * TILE:(rc[1] + 1) * TILE],
+                                                      [cv2.IMWRITE_JPEG_QUALITY, 86]), jobs))
+            if not all(done):                                        # a full disk: no manifest for a pyramid with holes
+                raise SystemExit(f'cannot write the tile cache {ld}: {done.count(False)} tiles could not be written '
+                                 '(is the disk full?)')
             levels.append(dict(w=w, h=h, cols=cols, rows=rows))
             if max(w, h) <= TILE:
                 break
@@ -139,15 +169,47 @@ def graticule(geo):
     return lines
 
 
-def page_data(image, raw, geo, side, levels, log):
-    H, W = raw.shape[:2]
+LIGHT_VERSION = 1
+
+
+def night_side(image, load_raw, geo, side, feats, xy, log):
+    load_raw = as_loader(load_raw, image)
+    """Per feature how lit it is, kept beside the tiles: it needs the pixels (or the Sun's elevation for a close-up), and
+    opening the image again with the same positioning must not decode a 200 MP picture to learn it again."""
+    closeup = bool((side.get('quality') or {}).get('closeup'))
+    sig = image_signature(image)
+    key = hashlib.sha1(json.dumps([LIGHT_VERSION, sig, geo.as_dict(), closeup, (side.get('quality') or {}).get('capture_utc'),
+                                   len(feats)], sort_keys=True, default=str).encode()).hexdigest()
+    p = os.path.join(tile_dir(image), 'light.json')
+    try:
+        with open(p) as fh:
+            c = json.load(fh)
+        if c.get('key') == key and len(c.get('light', ())) == len(feats):
+            return np.array(c['light'], float)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    if closeup:
+        from lunaratlas import sun_elevation_light         # a close-up has no sky: the Sun's elevation decides
+        light = sun_elevation_light(image, feats)
+    else:
+        light = light_levels(load_raw(), geo, feats, xy)
+    light = np.asarray(light, float)
+    try:
+        write_json_atomic(p, dict(key=key, light=[float(v) for v in light]))
+    except SystemExit:
+        log('could not keep the night side beside the tiles')
+    return light
+
+
+def page_data(image, load_raw, geo, side, levels, log):
+    load_raw = as_loader(load_raw, image)
+    H, W = side.get('height'), side.get('width')
+    if not (isinstance(H, int) and isinstance(W, int)):
+        H, W = load_raw().shape[:2]
     feats = load_features(log, sites=True)
     lat = np.array([f['lat'] for f in feats]); lon = np.array([f['lon'] for f in feats])
     x, y, z = geo.to_image(lat, lon)
-    light = light_levels(raw, geo, feats, np.stack([x, y], 1))
-    if (side.get('quality') or {}).get('closeup'):
-        from lunaratlas import sun_elevation_light         # a close-up has no sky: the Sun's elevation decides
-        light = sun_elevation_light(image, feats)
+    light = night_side(image, load_raw, geo, side, feats, np.stack([x, y], 1), log)
     rows = []
     for f, a, b, c, li in zip(feats, x, y, z, light):
         if c < 0.05 or not (-0.05 * W < a < 1.05 * W and -0.05 * H < b < 1.05 * H):
@@ -326,7 +388,7 @@ def export_command(image, o):
     if o.get('force'):
         args.append('--force')
     out = f"{os.path.splitext(image)[0]}_atlas{tag}{EXT[fmt]}"
-    return args + ['-o', out], out
+    return args + ['--overwrite', '-o', out], out                 # the page's own name: a re-export replaces the last one
 
 
 # ---------------------------------------------------------------- server
@@ -346,13 +408,17 @@ def reveal(path):
 class Session:
     """One open image: its page data, tiles, edits and export job."""
 
-    def __init__(self, image, geo, side, raw, log=print):
+    def __init__(self, image, geo, side, raw=None, log=print):
+        """raw: the pixels, or a function that reads them, or None (read from the file when needed). They are needed only
+        for a first open of an image: a repeat open uses the cached tiles and night side and never decodes it."""
         self.image = image
-        levels = build_tiles(image, raw, log)
-        self.data = page_data(image, raw, geo, side, levels, log)
+        load_raw = as_loader(raw, image)
+        levels = build_tiles(image, load_raw, log)
+        self.data = page_data(image, load_raw, geo, side, levels, log)
         self._json: dict[bool, bytes] = {}
         self.tiles = tile_dir(image)
         self.lock = threading.Lock()
+        self.rev = 0                                # the newest revision of the edits the page has sent
         self.job: ExportJob | None = None
 
     def data_json(self, launcher):
@@ -578,6 +644,13 @@ class Handler(BaseHTTPRequestHandler):
         if p in ('/edits', '/export') and not isinstance(o, dict):
             return self.json(dict(error='expected a JSON object'), 400)
         if p == '/edits':
+            rev = o.pop('rev', None)                # the page numbers its saves: a late one never overwrites a newer one
+            if isinstance(rev, (int, float)) and not isinstance(rev, bool):
+                with s.lock:
+                    stale = rev < s.rev
+                    s.rev = max(s.rev, rev)
+                if stale:
+                    return self.json(dict(stale=True), 409)
             try:
                 return self.json(write_edits(s.image, o, s.lock))
             except (OSError, ValueError) as e:
@@ -628,7 +701,7 @@ def run_server(srv, open_browser=True, log=print, path='/', what='viewer'):
         srv.server_close()
 
 
-def serve(image, geo, side, raw, port=8766, open_browser=True, log=print):
+def serve(image, geo, side, raw=None, port=8766, open_browser=True, log=print):
     session = Session(image, geo, side, raw, log)
     del raw
     run_server(start_server(port, log, session=session), open_browser, log)

@@ -572,6 +572,62 @@ const J = {
     await ok(await b.js(`document.getElementById('export').hidden`), 'Close closes the dialog');
   },
 
+  // ---------------------------------------------------------------- leaving at once, and a save that fails
+  async leave(b, ok) {
+    await openViewer(b);
+    const [cx, cy, R] = await centre(b);
+    await b.press('c'); await b.drag(cx, cy, cx + 0.2 * R, cy);
+    await b.until(`!document.getElementById('annot').hidden`, 3000, 'the editor');
+    await b.type('Last words'); await b.click('#aOk');
+    await b.click('#otherImage');                                // before the 300 ms timer of the save has run
+    await b.until(`location.pathname === '/app'`, 5000, 'the launcher');
+    await ok(true, 'the link to the launcher goes back');
+    const e = await b.js(`fetch('/edits').then((r) => r.json())`);
+    await ok(e.shapes.length === 1 && e.shapes[0].label === 'Last words', `the edit made an instant before leaving is saved (${JSON.stringify(e.shapes).slice(0, 80)})`);
+    // a reload straight after an edit
+    await openViewer(b);
+    await b.press('t'); await b.clickAt(cx - 0.3 * R, cy);
+    await b.until(`!document.getElementById('annot').hidden`, 3000, 'the text editor');
+    await b.type('Reloaded'); await b.click('#aOk');
+    await b.goto(BASE + '/', ready);
+    await sleep(500);
+    const nm = await b.text('#n-mine');
+    await ok(nm === '2', `a reload straight after an edit keeps it too (${nm} drawings, saved: ${JSON.stringify((await b.js(`fetch('/edits').then((r) => r.json())`)).shapes.map((q) => q.label))})`);
+  },
+
+  async savefail(b, ok) {
+    await openViewer(b);
+    const [cx, cy, R] = await centre(b);
+    await b.press('c'); await b.drag(cx, cy, cx + 0.2 * R, cy);
+    await b.until(`!document.getElementById('annot').hidden`, 3000, 'the editor');
+    await b.type('Unsaved'); await b.click('#aOk');
+    await b.js(`window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).includes('/edits') && o && o.method === 'POST' ? Promise.reject(new Error('down')) : window.__realFetch(u, o)`);
+    await b.press('v');
+    await b.click('#exportBtn');
+    await b.until(`!document.getElementById('export').hidden`, 2000, 'the export dialog');
+    await b.click('#xGo');
+    await b.until(`/could not be saved/.test(document.getElementById('toast').textContent)`, 5000, 'the warning');
+    await ok(true, 'an export whose drawings cannot be saved says so');
+    await ok(!(await b.js(`document.getElementById('xGo').disabled`)), 'and Export can be tried again');
+    const st = await b.js(`window.__realFetch('/export/status').then((r) => r.json())`);
+    await ok(st.state === 'none', `no export was started (${st.state})`);
+    await b.js(`window.fetch = window.__realFetch`);
+    await b.click('#xGo');
+    const done = await exported(b, 'tif');
+    await ok(/Written/.test(done), `with the connection back the export runs (${done})`);
+  },
+
+  async preview(b, ok) {
+    await openViewer(b);
+    await b.click('#exportBtn');
+    await b.until(`!document.getElementById('export').hidden`, 2000, 'the export dialog');
+    await sleep(1200);
+    await b.js(`(() => { const c = document.getElementById('xPrev'); let n = 0, w = c.width; Object.defineProperty(c, 'width', { get: () => w, set: (v) => { n++; w = v; } }); window.__prevRenders = () => n; })()`);
+    await b.click('#xGrid');
+    await sleep(1000);
+    await ok(await b.js('__prevRenders()') === 1, `one option change renders the preview once (${await b.js('__prevRenders()')})`);
+  },
+
   // ---------------------------------------------------------------- a reload keeps everything
   async persist(b, ok) {
     await openViewer(b);

@@ -229,7 +229,7 @@ class DamagedEditsNeverStopAnExport(S.TempDir, unittest.TestCase):
             d['edits'] = edits
             ag.write_json_atomic(ag.sidecar_path(img), d)
             out = os.path.join(self.tmp, 'out.png')
-            code, log = S.run_main('export', img, '-o', out)
+            code, log = S.run_main('export', img, '-o', out, '--overwrite')
             self.assertIsNone(code, log)
             self.assertTrue(os.path.exists(out))
 

@@ -101,6 +101,20 @@ class ViewerIsLocalOnly(unittest.TestCase):
     def test_the_token_is_not_in_the_log_of_a_browser_start(self):
         self.assertNotIn('LUNARATLAS_TOKEN', ''.join(self.v.lines))
 
+    def test_a_late_save_never_overwrites_a_newer_one(self):
+        def save(rev, label):
+            return self.req('POST', '/edits', {'Content-Type': 'application/json'},
+                            json.dumps(dict(rev=rev, shapes=[dict(kind='text', x=5, y=6, label=label)])).encode())
+        big = 10 ** 15
+        self.assertEqual(save(big + 2, 'newer')[0], 200)
+        code, _, body = save(big + 1, 'older')                          # an old request that arrives late
+        self.assertEqual(code, 409)
+        self.assertEqual(json.loads(self.req('GET', '/edits')[2])['shapes'][0]['label'], 'newer')
+        self.assertEqual(save(big + 3, 'newest')[0], 200)
+        self.assertEqual(json.loads(self.req('GET', '/edits')[2])['shapes'][0]['label'], 'newest')
+        self.assertNotIn('rev', json.loads(self.req('GET', '/edits')[2]), 'the number is not stored in the sidecar')
+        self.assertEqual(self.req('POST', '/edits', {'Content-Type': 'application/json'}, b'{}')[0], 200, 'a save without one is as before')
+
     def test_the_banner_names_no_interpreter(self):
         _, hdr, _ = self.req('GET', '/')
         self.assertEqual(hdr.get('server'), 'LunarAtlas')
@@ -413,6 +427,42 @@ class SomeoneElsesSidecar(S.TempDir):
                    dict(name='ok.ttf', download_url='http://evil.example/ok.ttf'),
                    dict(name='fine.ttf', download_url=atlas_render.GOOGLE_FONTS_RAW + 'main/ofl/x/fine.ttf')]
         self.assertEqual([e['name'] for e in atlas_render.Fonts._listed(listing + ['junk', dict(name=5)])], ['fine.ttf'])
+
+
+@S.needs_all
+class ExplicitOutputName(S.TempDir):
+    """-o names a file of the user's choosing: an existing one is not replaced unless they say so."""
+
+    def test_an_existing_target_needs_overwrite_but_the_default_name_is_replaced(self):
+        img, _ = S.moon_image(self.tmp)
+        out = os.path.join(self.tmp, 'mine.jpg')
+        with open(out, 'w') as fh:
+            fh.write('precious')
+        code, _ = S.run_main('export', img, '-o', out, '--max-size', '200')
+        self.assertIn('already exists', str(code))
+        self.assertIn('--overwrite', str(code))
+        self.assertEqual(open(out).read(), 'precious')
+        code, _ = S.run_main('export', img, '-o', out, '--max-size', '200', '--overwrite')
+        self.assertIsNone(code)
+        self.assertGreater(os.path.getsize(out), 100)
+        for _ in range(2):                                            # the default name: re-exporting replaces it
+            self.assertIsNone(S.run_main('export', img, '--max-size', '200', '--format', 'jpg')[0])
+
+    def test_a_dangling_symlink_is_not_written_through(self):
+        if os.name != 'posix':
+            self.skipTest('symlinks need POSIX')
+        img, _ = S.moon_image(self.tmp)
+        victim = os.path.join(self.tmp, 'victim.txt')
+        link = os.path.join(self.tmp, 'link.jpg')
+        os.symlink(victim, link)
+        code, _ = S.run_main('export', img, '-o', link, '--max-size', '200')
+        self.assertIn('already exists', str(code))
+        self.assertFalse(os.path.exists(victim))
+
+    def test_the_page_re_exports_over_its_own_name(self):
+        from atlas_view import export_command
+        cmd, out = export_command(os.path.join(self.tmp, 'moon.tif'), {})
+        self.assertEqual(cmd[-3:], ['--overwrite', '-o', out])
 
 
 class ReleaseInputs(unittest.TestCase):

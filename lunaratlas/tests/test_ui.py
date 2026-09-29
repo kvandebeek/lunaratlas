@@ -182,6 +182,20 @@ class UI(S.TempDir):
         self.open_image()
         self.journey('persist')
 
+    def test_an_edit_made_an_instant_before_leaving_is_kept(self):
+        img = self.open_image()
+        self.journey('leave')
+        self.assertEqual([s.get('label') for s in self.edits(img)['shapes']], ['Last words', 'Reloaded'])
+
+    def test_an_export_does_not_start_when_the_drawings_cannot_be_saved(self):
+        img = self.open_image()
+        self.journey('savefail')
+        self.assertEqual([s.get('label') for s in self.edits(img)['shapes']], ['Unsaved'], 'saved once the connection was back')
+
+    def test_the_preview_renders_once_per_change(self):
+        self.open_image()
+        self.journey('preview')
+
     def test_the_quality_warning_of_a_photo_named_anyway(self):
         self.open_image(gate=dict(ok=False, forced=True, reasons=['too blurry'],
                                   line='quality refused: too blurry · edge 9.1 px'))

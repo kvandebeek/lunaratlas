@@ -200,16 +200,31 @@ class SamePhotoAgain(S.TempDir):
         self.assertEqual(again['path'], first['path'])
         self.assertEqual(kept, a)
 
-    @unittest.expectedFailure
     def test_another_photo_with_the_same_name_and_size_is_kept(self):
-        # known issue: the size alone decides "the same file", and uncompressed captures of one camera all have the
-        # same size; a second moon.tif (no time given) opens the first photo and its positioning instead
-        # (atlas_app.App.upload: compare the bytes, or a hash, before reusing the copy)
+        # uncompressed captures of one camera all have one size: the bytes decide, not the name and the size
         a, b = self.uncompressed(1), self.uncompressed(2)
         self.assertEqual(len(a), len(b))
+        first, kept1 = self.upload(a)
+        with open(sidecar_path(first['path']), 'w') as fh:
+            fh.write('{"the": "first photo\'s positioning"}')
+        second, kept2 = self.upload(b)
+        self.assertNotEqual(second['path'], first['path'], 'a copy of its own')
+        self.assertTrue(os.path.basename(second['path']).endswith(' (2).tif'), second['path'])
+        self.assertEqual((kept1, kept2), (a, b), 'each copy holds its own pixels')
+        self.assertFalse(second['located'], 'and starts without the other photo\'s positioning')
+        self.assertEqual(open(sidecar_path(first['path'])).read(), '{"the": "first photo\'s positioning"}', 'the first is untouched')
+        third, _ = self.upload(b)                                     # the second photo again: its own copy again
+        self.assertEqual(third['path'], second['path'])
+        self.assertEqual(self.upload(a)[0]['path'], first['path'])
+        c = self.uncompressed(3)
+        self.assertTrue(os.path.basename(self.upload(c)[0]['path']).endswith(' (3).tif'))
+
+    def test_an_upload_leaves_no_temporary_file_behind(self):
+        a = self.uncompressed(1)
         self.upload(a)
-        second, kept = self.upload(b)
-        self.assertEqual(kept, b, f'{os.path.basename(second["path"])} holds the earlier photo')
+        self.upload(a)
+        self.upload(self.uncompressed(2))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, 'work'))), ['moon (2).tif', 'moon.tif'])
 
 
 @unittest.skipUnless(S.HAVE_REFERENCE, 'needs the reference data in lunaratlas/data')
