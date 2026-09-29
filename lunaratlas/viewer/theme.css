@@ -1,0 +1,121 @@
+/* LunarAtlas design tokens, taken from the app icon (packaging/icon/README.md). Both pages (app.html, index.html)
+   and the canvas (viewer.js reads them with getComputedStyle) use these: no colours of their own. */
+:root {
+  /* night navy: app background → panel → card → raised / selected */
+  --bg-0: #0A0F25;
+  --bg-1: #111934;
+  --bg-2: #18224A;
+  --bg-3: #1F2C5A;
+  --bg-4: #28386E;                         /* hover on raised */
+  --panel: rgba(17, 25, 52, 0.84);         /* floating panels over the Moon (blurred) */
+  --scrim: rgba(5, 8, 20, 0.62);
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  /* ivory text; 2 and 3 keep ≥ 4.5:1 up to --bg-3 */
+  --text: #FCF8EE;
+  --text-2: #B7BFD8;
+  --text-3: #97A1C2;
+  --text-disabled: #5E6789;
+
+  /* the one accent */
+  --accent: #F5A742;
+  --accent-hover: #F8B963;
+  --accent-press: #E3922C;
+  --accent-soft: rgba(245, 167, 66, 0.16);
+  --accent-line: rgba(245, 167, 66, 0.55);
+  --accent-ink: #1A1206;
+  --focus: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--accent);
+
+  /* the map */
+  --grid: #8FD8EC;
+  --grid-line: rgba(143, 216, 236, 0.30);
+  --grid-label: rgba(143, 216, 236, 0.90);
+  --moon: #FCF8EE;
+  --moon-2: #D8CEB8;
+  --moon-shadow: #26326A;
+  --halo: rgba(5, 8, 20, 0.72);            /* soft shade behind names on the Moon */
+
+  --danger: #F08A7E;
+  --danger-soft: rgba(240, 138, 126, 0.14);
+
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 14px;
+  --shadow: 0 12px 36px rgba(2, 4, 14, 0.55);
+  --ease: cubic-bezier(.2, .7, .2, 1);
+
+  --font-ui: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+/* ---- shared controls: every one has hover, pressed, focus-visible and disabled */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; padding: 0 13px;
+  border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg-2); color: var(--text);
+  font: 500 13px/1 var(--font-ui); cursor: pointer; white-space: nowrap; text-decoration: none;
+  transition: background .12s, border-color .12s, color .12s, transform .06s; }
+.btn:hover { background: var(--bg-3); border-color: rgba(255, 255, 255, 0.22); }
+.btn:active { background: var(--bg-1); transform: translateY(1px); }
+.btn:focus-visible { outline: none; box-shadow: var(--focus); }
+.btn:disabled, .btn[aria-disabled=true] { background: transparent; border-color: var(--line); color: var(--text-disabled);
+  cursor: default; transform: none; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.primary:active { background: var(--accent-press); border-color: var(--accent-press); }
+.btn.primary:disabled { background: rgba(245, 167, 66, 0.28); border-color: transparent; color: rgba(26, 18, 6, 0.6); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+.btn.ghost:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.btn.ghost:active { background: rgba(255, 255, 255, 0.03); }
+.btn.ghost:disabled { color: var(--text-disabled); background: transparent; }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { background: var(--danger-soft); border-color: rgba(240, 138, 126, 0.4); }
+.btn.lg { height: 40px; padding: 0 18px; font-size: 14px; border-radius: 10px; }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 12px; border-radius: 7px; }
+
+.linkbtn { border: 0; background: none; padding: 2px 4px; margin: -2px -4px; border-radius: 5px; color: var(--text-2);
+  font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.linkbtn:hover { color: var(--text); text-decoration-color: currentColor; }
+.linkbtn:active { color: var(--text-2); }
+.linkbtn:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.switch { position: relative; width: 30px; height: 18px; flex: none; display: inline-block; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch span { position: absolute; inset: 0; border-radius: 9px; background: rgba(255, 255, 255, 0.14); transition: .15s; cursor: pointer; }
+.switch span::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--text-2); transition: .15s var(--ease); }
+.switch:hover span { background: rgba(255, 255, 255, 0.22); }
+.switch input:checked + span { background: var(--accent); }
+.switch:hover input:checked + span { background: var(--accent-hover); }
+.switch input:checked + span::after { transform: translateX(12px); background: var(--accent-ink); }
+.switch input:active + span::after { width: 17px; }
+.switch input:focus-visible + span { box-shadow: var(--focus); }
+.switch input:disabled + span { opacity: .4; cursor: default; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px;
+  border: 1px solid var(--line-strong); background: none; color: var(--text); font: 12px/1 var(--font-ui); cursor: pointer; }
+.chip:hover { border-color: var(--accent-line); background: var(--accent-soft); }
+.chip:active { background: rgba(245, 167, 66, 0.1); }
+.chip.on { border-color: var(--accent); color: var(--accent); }
+.chip:focus-visible { outline: none; box-shadow: var(--focus); }
+
+/* status chips (solve state, quality) */
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 10px;
+  font: 500 11.5px/1 var(--font-ui); white-space: nowrap; border: 1px solid transparent; }
+.tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.tag.ok { color: var(--grid); background: rgba(143, 216, 236, 0.10); }
+.tag.warn { color: var(--accent); background: var(--accent-soft); }
+.tag.off { color: var(--text-2); background: rgba(255, 255, 255, 0.06); }
+
+kbd { font: 500 11px/16px var(--font-ui); padding: 0 5px; border-radius: 4px; border: 1px solid var(--line-strong);
+  color: var(--text-2); background: rgba(255, 255, 255, 0.04); }
+
+.brandmark { width: 22px; height: 22px; flex: none; display: block; }
+
+::selection { background: rgba(245, 167, 66, 0.35); color: var(--text); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
+}

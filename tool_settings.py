@@ -1,4 +1,4 @@
-"""Settings for the lunar tools (moon_atlas, lunar_finish, mosaic_builder, panel_classifier) from
+"""Settings for the lunar tools (lunaratlas, lunar_finish, mosaic_builder, panel_classifier) from
 the .env file next to this module (not committed). Every key is declared once in SPECS below, with its type, default and
 allowed range, so the tools, their --help and .env.example agree.
 
@@ -13,6 +13,14 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+# the packaged app's folder is read-only: its .env lives in the user's application-data folder (see atlas_paths)
+if getattr(sys, 'frozen', False):
+    ENV_DIR = (os.path.expanduser('~/Library/Application Support/LunarAtlas') if sys.platform == 'darwin' else
+               os.path.join(os.environ.get('LOCALAPPDATA') or os.path.expanduser('~/AppData/Local'), 'LunarAtlas', 'Data')
+               if sys.platform == 'win32' else
+               os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'), 'lunaratlas'))
+else:
+    ENV_DIR = None                     # next to this module: ROOT, looked up when read
 CPU = os.cpu_count() or 2
 
 
@@ -24,45 +32,45 @@ def S(key, kind, default, help, lo=None, hi=None, choices=None, lo_open=False, h
 LAYER_NAMES = ('area', 'crater', 'lettered', 'relief', 'landing')
 SPECS = [
     ('Observing site (only the parallax of the lunar ephemeris: up to 1° of libration)', [
-        S('MOON_ATLAS_OBSERVER_NAME', 'str', 'Belgium', 'a name for the site (shown nowhere yet)'),
-        S('MOON_ATLAS_OBSERVER_LAT', 'float', 50.9, 'latitude, ° north', -90, 90),
-        S('MOON_ATLAS_OBSERVER_LON', 'float', 4.4, 'longitude, ° east', -180, 180),
-        S('MOON_ATLAS_OBSERVER_HEIGHT_M', 'float', 50.0, 'height above sea level, m', -500, 9000),
+        S('LUNARATLAS_OBSERVER_NAME', 'str', 'Belgium', 'a name for the site (shown nowhere yet)'),
+        S('LUNARATLAS_OBSERVER_LAT', 'float', 50.9, 'latitude, ° north', -90, 90),
+        S('LUNARATLAS_OBSERVER_LON', 'float', 4.4, 'longitude, ° east', -180, 180),
+        S('LUNARATLAS_OBSERVER_HEIGHT_M', 'float', 50.0, 'height above sea level, m', -500, 9000),
     ]),
     ('Equipment (close-up search and the optics prompt)', [
-        S('MOON_ATLAS_TELESCOPE', 'str', '250 PDS', 'telescope name, used in the info block'),
-        S('MOON_ATLAS_FOCAL_MM', 'float', 1200.0, 'native focal length, mm', 50, 30000),
-        S('MOON_ATLAS_EXTENDERS', 'pairs', 'native:1, 2× ES Focal Extender:2, 2.5× TV Powermate:2.5, 3× ES Focal Extender:3',
+        S('LUNARATLAS_TELESCOPE', 'str', '250 PDS', 'telescope name, used in the info block'),
+        S('LUNARATLAS_FOCAL_MM', 'float', 1200.0, 'native focal length, mm', 50, 30000),
+        S('LUNARATLAS_EXTENDERS', 'pairs', 'native:1, 2× ES Focal Extender:2, 2.5× TV Powermate:2.5, 3× ES Focal Extender:3',
           'focal extenders as name:factor, comma-separated; factor per entry', 0.2, 10),
-        S('MOON_ATLAS_CAMERAS', 'pairs', 'IMX678:2.0, IMX533:3.76, IMX462:2.9',
+        S('LUNARATLAS_CAMERAS', 'pairs', 'IMX678:2.0, IMX533:3.76, IMX462:2.9',
           'cameras as name:pixel size in µm, comma-separated; µm per entry', 0.5, 30),
     ]),
-    ('moon_atlas export (labelled images)', [
-        S('MOON_ATLAS_FORMAT', 'choice', 'tiff', 'output format when -o does not decide it', choices=('tiff', 'png', 'jpg')),
-        S('MOON_ATLAS_MAX_SIZE', 'int', 0, 'longest output side in px (never upscaled); 0 = 1:1', 0, 100000),
-        S('MOON_ATLAS_AROUND_SIZE', 'str', '3000x2000', 'view size W x H in source px for --around NAME'),
-        S('MOON_ATLAS_MIN_SIZE', 'float', 24.0, 'smallest crater that gets a name, apparent diameter in output px', 4, 400,
+    ('lunaratlas export (labelled images)', [
+        S('LUNARATLAS_FORMAT', 'choice', 'tiff', 'output format when -o does not decide it', choices=('tiff', 'png', 'jpg')),
+        S('LUNARATLAS_MAX_SIZE', 'int', 0, 'longest output side in px (never upscaled); 0 = 1:1', 0, 100000),
+        S('LUNARATLAS_AROUND_SIZE', 'str', '3000x2000', 'view size W x H in source px for --around NAME'),
+        S('LUNARATLAS_MIN_SIZE', 'float', 24.0, 'smallest crater that gets a name, apparent diameter in output px', 4, 400,
           typical='16–40'),
-        S('MOON_ATLAS_FONT', 'str', 'Roboto', 'label font: any Google Fonts family (the viewer serves Roboto, Inter, '
-          'IBM Plex Sans, Barlow, Geist, Space Grotesk)'),
-        S('MOON_ATLAS_FONT_SCALE', 'float', 1.0, 'label size factor', 0.3, 5, typical='0.8–1.6'),
-        S('MOON_ATLAS_NIGHT', 'choice', 'hide', 'names on the unlit side', choices=('hide', 'dim', 'show')),
-        S('MOON_ATLAS_LAYERS', 'list', ','.join(LAYER_NAMES), 'which names, comma-separated, or none',
+        S('LUNARATLAS_FONT', 'str', 'IBM Plex Sans', 'label font: IBM Plex Sans, Source Sans 3 or Roboto (bundled, as '
+          'in the viewer), or any Google Fonts family (downloaded once)'),
+        S('LUNARATLAS_FONT_SCALE', 'float', 1.0, 'label size factor', 0.3, 5, typical='0.8–1.6'),
+        S('LUNARATLAS_NIGHT', 'choice', 'dim', 'names on the unlit side', choices=('hide', 'dim', 'show')),
+        S('LUNARATLAS_LAYERS', 'list', ','.join(LAYER_NAMES), 'which names, comma-separated, or none',
           choices=LAYER_NAMES + ('none',)),
-        S('MOON_ATLAS_RIMS', 'bool', True, 'crater outlines in exports'),
-        S('MOON_ATLAS_LETTERED', 'bool', True, 'lettered satellite craters (Copernicus A, …)'),
-        S('MOON_ATLAS_LANDING', 'bool', True, 'landing sites'),
-        S('MOON_ATLAS_GRID', 'bool', True, 'lat/lon grid in exports'),
-        S('MOON_ATLAS_DRAWINGS', 'bool', True, "the viewer's drawings and measurements in exports"),
-        S('MOON_ATLAS_INFO', 'bool', True, 'info block (date, optics, scale bar, N/E arrows) in exports'),
-        S('MOON_ATLAS_JPEG_QUALITY', 'int', 92, 'JPEG quality', 0, 100, typical='85–95'),
+        S('LUNARATLAS_RIMS', 'bool', True, 'crater outlines in exports'),
+        S('LUNARATLAS_LETTERED', 'bool', True, 'lettered satellite craters (Copernicus A, …)'),
+        S('LUNARATLAS_LANDING', 'bool', True, 'landing sites'),
+        S('LUNARATLAS_GRID', 'bool', True, 'lat/lon grid in exports'),
+        S('LUNARATLAS_DRAWINGS', 'bool', True, "the viewer's drawings and measurements in exports"),
+        S('LUNARATLAS_INFO', 'bool', True, 'info block (date, optics, scale bar, N/E arrows) in exports'),
+        S('LUNARATLAS_JPEG_QUALITY', 'int', 92, 'JPEG quality', 0, 100, typical='85–95'),
     ]),
-    ('moon_atlas viewer', [
-        S('MOON_ATLAS_VIEW_PORT', 'int', 8766, 'first port to try (the next free one is used)', 1024, 65535),
-        S('MOON_ATLAS_VIEW_OPEN', 'bool', True, 'open the browser when the viewer starts'),
+    ('lunaratlas viewer', [
+        S('LUNARATLAS_VIEW_PORT', 'int', 8766, 'first port to try (the next free one is used)', 1024, 65535),
+        S('LUNARATLAS_VIEW_OPEN', 'bool', True, 'open the browser when the viewer starts'),
     ]),
-    ('lunar_finish: wavelet sharpening (first step; PixInsight ATrousWaveletTransform on lightness)', [
-        S('LUNAR_FINISH_WAVELETS', 'str', '', "empty = off; 'pixinsight' = 4 layers, linear (3), layer 1 bias +3; or 1–8 "
+    ('lunar_finish: wavelet sharpening (first step; à trous wavelet transform on lightness)', [
+        S('LUNAR_FINISH_WAVELETS', 'str', '', "empty = off; 'classic' = 4 layers, linear (3), layer 1 bias +3; or 1–8 "
           'comma-separated layer biases, layer weight = 1 + bias; each bias ≥ −1 (−1 removes the layer, 0 keeps it); '
           'typical 0–4 for layer 1, less for coarser layers'),
         S('LUNAR_FINISH_WAVELET_KERNEL', 'choice', 'linear', "scaling function: linear = 'Linear Interpolation (3)', "
@@ -127,7 +135,7 @@ SPECS = [
     ]),
 ]
 BY_KEY = {s['key']: s for _, group in SPECS for s in group}
-PREFIXES = ('MOON_ATLAS_', 'LUNAR_FINISH_', 'MOSAIC_')
+PREFIXES = ('LUNARATLAS_', 'LUNAR_FINISH_', 'MOSAIC_')
 _raw, _warned = None, set()
 
 
@@ -136,7 +144,7 @@ def _read():
     if _raw is None:
         raw = {}
         try:
-            with open(os.path.join(ROOT, '.env'), encoding='utf-8') as fh:
+            with open(os.path.join(ENV_DIR or ROOT, '.env'), encoding='utf-8') as fh:
                 for line in fh:
                     line = line.split('#', 1)[0].strip()
                     if '=' in line:
@@ -249,7 +257,7 @@ def pairs(key, default=None):
 
 
 def example():
-    lines = ['# Settings for the lunar tools: moon_atlas, lunar_finish, mosaic_builder, panel_classifier.',
+    lines = ['# Settings for the lunar tools: lunaratlas, lunar_finish, mosaic_builder, panel_classifier.',
              '# Copy to .env (not committed) and uncomment what you change. Written by `python3 tool_settings.py --example`',
              '# from the SPECS in tool_settings.py, so the ranges here are the ones the tools enforce.',
              '# Precedence: command-line option > environment variable > .env > this default.',

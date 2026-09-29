@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LunarAtlas
+Comment=IAU feature names on your own lunar images
+Exec=LunarAtlas
+Icon=lunaratlas
+Terminal=false
+Categories=Graphics;Science;Astronomy;

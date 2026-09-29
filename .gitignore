@@ -1,5 +1,5 @@
 # downloaded on demand (LROC WAC reference tiles, Google Fonts, IAU gazetteer, LOLA elevation)
-moon_atlas/data/
+lunaratlas/data/
 
 # per-machine settings: observing site, equipment, tool defaults
 .env
@@ -9,4 +9,8 @@ __pycache__/
 .DS_Store
 
 # internal working notes, not part of the published docs
-moon_atlas/REMAINING_WORK.md
+lunaratlas/REMAINING_WORK.md
+
+# packaged-app builds (packaging/build.py)
+build/
+dist/

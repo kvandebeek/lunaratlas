@@ -8,23 +8,31 @@ labelled images at 1:1 or smaller (never upscaled). A browser viewer lets you se
 draw, and move or restyle the labels; your edits are kept and reused by the command-line export.
 
 ```sh
-python3 moon_atlas/moon_atlas.py locate mosaic_finished.tif   # position the image (10-20 s; close-ups 30-100 s)
-python3 moon_atlas/moon_atlas.py view   mosaic_finished.tif   # browser viewer and editor
-python3 moon_atlas/moon_atlas.py export mosaic_finished.tif --around Copernicus --size 3600x2400
+python3 lunaratlas/lunaratlas.py locate mosaic_finished.tif   # position the image (10-20 s; close-ups 30-100 s)
+python3 lunaratlas/lunaratlas.py view   mosaic_finished.tif   # browser viewer and editor
+python3 lunaratlas/lunaratlas.py export mosaic_finished.tif --around Copernicus --size 3600x2400
 ```
 
 Measured on a 200 Mpx lunar mosaic: 621 terrain matches at 1.56 px RMS (0.43 km).
 
-See [`moon_atlas/README.md`](moon_atlas/README.md) for how the positioning works, the quality gate, the
+See [`lunaratlas/README.md`](lunaratlas/README.md) for how the positioning works, the quality gate, the
 close-up search, the viewer and every export option.
+
+## Without a terminal
+
+Download the app for your computer from the [releases](https://github.com/kvandebeek/lunaratlas/releases) page
+(macOS `.dmg`, Windows installer, Linux `.tar.gz`) and start it: drop a photo of the Moon on its window and the
+names appear. Exports go to `Pictures/LunarAtlas`. The first photo downloads about 145 MB of Moon maps (the first close-up about 530 MB more),
+once. From a checkout, `python3 lunaratlas/lunaratlas.py app` does the same. Building the app yourself:
+[`packaging/`](packaging/README.md).
 
 ## Requirements
 
-macOS, Linux or Windows. Python 3.14 with numpy, OpenCV and Pillow. Developed and measured on macOS
+macOS, Linux or Windows. Python 3.14 with numpy, OpenCV and Pillow (`python3 -m pip install -r requirements.txt`). Developed and measured on macOS
 (Apple silicon); Linux and Windows should work but are untested, so do tell me if they don't.
 
 Reference data (IAU gazetteer, LROC WAC
-albedo, LOLA elevation, fonts) is downloaded once on first use into `moon_atlas/data/`.
+albedo, LOLA elevation, fonts) is downloaded once on first use into `lunaratlas/data/`.
 
 ## Settings
 

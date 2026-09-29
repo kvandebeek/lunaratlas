@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1F2C5A"/><stop offset="1" stop-color="#0A0F25"/></linearGradient>
+<radialGradient id="moon" cx="0.78" cy="0.35" r="0.8"><stop offset="0" stop-color="#FCF8EE"/><stop offset="1" stop-color="#D8CEB8"/></radialGradient>
+<clipPath id="disc"><circle cx="512" cy="512" r="300"/></clipPath>
+<clipPath id="lit"><path d="M512 212 A300 300 0 0 1 512 812 A110 300 0 0 0 512 212 Z"/></clipPath>
+</defs>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+<circle cx="512" cy="512" r="300" fill="#26326A"/>
+<path d="M512 212 A300 300 0 0 1 512 812 A110 300 0 0 0 512 212 Z" fill="url(#moon)"/>
+<g clip-path="url(#lit)"><circle cx="716" cy="440" r="40" fill="#C2B597"/><circle cx="690" cy="650" r="46" fill="#C2B597"/></g>
+<g clip-path="url(#disc)" fill="none" stroke="#8FD8EC" stroke-width="16" stroke-opacity="0.75"><ellipse cx="512" cy="512" rx="170" ry="300"/><line x1="212" y1="512" x2="812" y2="512"/></g>
+<circle cx="512" cy="512" r="300" fill="none" stroke="#8FD8EC" stroke-width="16" stroke-opacity="0.85"/>
+<g fill="none" stroke="#F5A742" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"><path d="M170 290 V170 H290"/><path d="M734 170 H854 V290"/><path d="M854 734 V854 H734"/><path d="M290 854 H170 V734"/></g>
+</svg>

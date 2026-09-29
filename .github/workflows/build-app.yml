@@ -1,0 +1,75 @@
+# The packaged LunarAtlas for macOS (Apple silicon and Intel), Windows and Linux.
+# Run it by hand (Actions > Build app > Run workflow) or push a tag v1.2.3: a tag also makes a draft release with
+# the installers attached.
+name: Build app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, exe: 'dist/LunarAtlas.app/Contents/MacOS' }        # Apple silicon
+          - { os: macos-15-intel, exe: 'dist/LunarAtlas.app/Contents/MacOS' }        # Intel
+          - { os: windows-latest, exe: 'dist/LunarAtlas' }
+          - { os: ubuntu-22.04, exe: 'dist/LunarAtlas' }                        # older glibc: runs on more distros
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Dependencies
+        run: python -m pip install -r packaging/requirements-build.txt
+      - name: Inno Setup
+        if: runner.os == 'Windows'
+        run: command -v iscc || test -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" || choco install innosetup -y --no-progress
+      - name: Version
+        # the tag's number, else 0.0.0 (Windows file versions must be numbers)
+        run: |
+          v=0.0.0; [[ "$GITHUB_REF" == refs/tags/v* ]] && v="${GITHUB_REF_NAME#v}"
+          echo "LUNARATLAS_VERSION=$v" >> "$GITHUB_ENV"
+      - name: Build
+        run: python packaging/build.py --version "$LUNARATLAS_VERSION"
+      - name: Smoke test
+        # the console twin answers, and the launcher serves its page (no browser, a scratch work folder)
+        run: |
+          "${{ matrix.exe }}/lunaratlas-cli" --help
+          "${{ matrix.exe }}/lunaratlas-cli" app --no-open --port 8799 --folder "$RUNNER_TEMP/work" &
+          for i in $(seq 1 60); do curl -sf http://localhost:8799/app/ping && break; sleep 1; done
+          curl -sf http://localhost:8799/app | grep -q 'LunarAtlas'
+          curl -sf -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:8799/app/quit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LunarAtlas-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "LunarAtlas ${GITHUB_REF_NAME#v}"
