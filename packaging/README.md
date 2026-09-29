@@ -20,7 +20,7 @@ On the platform the build is for (PyInstaller does not cross-compile):
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate          # Windows: .venv\Scripts\activate
-python3 -m pip install -r packaging/requirements-build.txt
+python3 -m pip install --require-hashes -r packaging/requirements-build.lock
 python3 packaging/build.py --version 1.0.0             # -> dist/
 ```
 
@@ -50,11 +50,28 @@ Actions tab, or push a tag `v1.0.0` to get a draft release with the installers a
 | Photos and exports | `~/Pictures/LunarAtlas` | `Pictures\LunarAtlas` | `~/Pictures/LunarAtlas` |
 | Log | `lunaratlas.log` in the data folder | same | same |
 
+## Locked dependencies
+
+The builds and the tests install from lock files with a hash for every wheel (`pip install --require-hashes`), so what
+goes into a release is what was reviewed, not what PyPI serves that day:
+
+| File | For |
+|---|---|
+| `requirements.lock` | running LunarAtlas from a checkout (`requirements.txt` has the loose bounds) |
+| `requirements-ci.lock` | the test workflows (the same, plus certifi) |
+| `packaging/requirements-build.lock` | the app builds (adds PyInstaller, pywebview, certifi) |
+
+`packaging/lock.sh` rewrites all three (`uv`, universal: one file for macOS, Windows and Linux); run it to update a
+dependency, read the diff, commit it. The workflow actions are pinned to commit SHAs (the tag is in the comment).
+
 ## Signing
 
 Unsigned builds work, but the first start needs the user's permission:
 - **macOS:** "LunarAtlas cannot be opened" → System Settings > Privacy & Security > *Open Anyway* (once).
   With an Apple Developer ID, set `MACOS_SIGN_IDENTITY` (and `MACOS_NOTARY_PROFILE` from
   `xcrun notarytool store-credentials`) before `build.py` to sign and notarise; then there is no warning.
-- **Windows:** SmartScreen shows "Windows protected your PC" → *More info* > *Run anyway*. A code-signing
-  certificate removes it (not wired in yet).
+- **Windows:** SmartScreen shows "Windows protected your PC" → *More info* > *Run anyway*. An Authenticode
+  code-signing certificate removes it; there is none yet, so the installer is not signed.
+
+macOS signing signs every nested binary and bundle inside the app one by one, innermost first, then the app (not
+`codesign --deep`). Every release lists `SHA256SUMS.txt`; check a download with `shasum -a 256 -c SHA256SUMS.txt`.

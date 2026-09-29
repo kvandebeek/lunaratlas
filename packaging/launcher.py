@@ -21,7 +21,8 @@ def certificates():
         import certifi
     except ImportError:
         return
-    os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+    os.environ['SSL_CERT_FILE'] = certifi.where()          # not setdefault: an inherited variable must not swap the trust store
+    os.environ.pop('SSL_CERT_DIR', None)
 
 
 def main():

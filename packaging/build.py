@@ -33,6 +33,38 @@ def run(*cmd, **kw):
     subprocess.run(cmd, check=True, **kw)
 
 
+MACHO_MAGIC = {b'\xfe\xed\xfa\xce', b'\xfe\xed\xfa\xcf', b'\xce\xfa\xed\xfe', b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe'}
+
+
+def signables(app):
+    """What codesign must sign inside an .app, innermost first: every Mach-O file and every nested bundle (.framework,
+    .app), so that each seal covers code that is already sealed. (codesign --deep signs in no defined order and is
+    deprecated for signing.) The app itself is signed last, by the caller."""
+    found = []
+    for root, dirs, files in os.walk(app):
+        for name in files:
+            path = os.path.join(root, name)
+            if os.path.islink(path):
+                continue
+            try:
+                with open(path, 'rb') as fh:
+                    if fh.read(4) in MACHO_MAGIC:
+                        found.append(path)
+            except OSError:
+                pass
+        for name in dirs:
+            if name.endswith(('.framework', '.app', '.xpc', '.bundle')) and not os.path.islink(os.path.join(root, name)):
+                found.append(os.path.join(root, name))
+    return sorted(found, key=lambda p: (-p.count(os.sep), p))
+
+
+def sign_macos(app, ident):
+    for path in signables(app):
+        run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', ident, path)
+    run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', ident, app)
+    run('codesign', '--verify', '--strict', '--verbose=2', app)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--version', default=os.environ.get('LUNARATLAS_VERSION', '0.1.0'))
@@ -49,7 +81,7 @@ def main():
         app = os.path.join(DIST, 'LunarAtlas.app')
         ident = os.environ.get('MACOS_SIGN_IDENTITY')     # "Developer ID Application: …" in the keychain; else unsigned
         if ident:
-            run('codesign', '--force', '--deep', '--options', 'runtime', '--timestamp', '--sign', ident, app)
+            sign_macos(app, ident)
         out = f'{base}-macos-{arch}.dmg'
         if os.path.exists(out):
             os.remove(out)

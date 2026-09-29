@@ -9,7 +9,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read              # the build jobs only read; the release job below may write
 
 jobs:
   build:
@@ -26,12 +26,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.14'
       - name: Dependencies
-        run: python -m pip install -r packaging/requirements-build.txt
+        run: python -m pip install --require-hashes -r packaging/requirements-build.lock       # pinned, with hashes
       - name: Inno Setup
         if: runner.os == 'Windows'
         run: command -v iscc || test -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" || choco install innosetup -y --no-progress
@@ -46,11 +46,13 @@ jobs:
         # the console twin answers, and the launcher serves its page (no browser, a scratch work folder)
         run: |
           "${{ matrix.exe }}/lunaratlas-cli" --help
+          export LUNARATLAS_TOKEN=smoke-test-token           # the launcher wants its token on every request
           "${{ matrix.exe }}/lunaratlas-cli" app --no-open --port 8799 --folder "$RUNNER_TEMP/work" &
-          for i in $(seq 1 60); do curl -sf http://localhost:8799/app/ping && break; sleep 1; done
-          curl -sf http://localhost:8799/app | grep -q 'LunarAtlas'
-          curl -sf -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:8799/app/quit
-      - uses: actions/upload-artifact@v4
+          for i in $(seq 1 60); do curl -sf -H "X-LA-Token: $LUNARATLAS_TOKEN" http://localhost:8799/app/ping && break; sleep 1; done
+          curl -sf -H "X-LA-Token: $LUNARATLAS_TOKEN" http://localhost:8799/app | grep -q 'LunarAtlas'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8799/app)" = 403        # no token, no answer
+          curl -sf -X POST -H "X-LA-Token: $LUNARATLAS_TOKEN" -H 'Content-Type: application/json' -d '{}' http://localhost:8799/app/quit
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: LunarAtlas-${{ matrix.os }}
           path: |
@@ -64,12 +66,16 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: out
           merge-multiple: true
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "LunarAtlas ${GITHUB_REF_NAME#v}"
+        run: |
+          (cd out && sha256sum * > SHA256SUMS.txt)          # so a download can be checked against the release
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "LunarAtlas ${GITHUB_REF_NAME#v}"
