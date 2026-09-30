@@ -429,7 +429,8 @@ const J = {
     await ok(await b.js(`(__atlas.render(), __atlas.placed.length === 0)`), 'the L key turns all names off');
     await b.press('l');
     await ok(await b.js(`(__atlas.render(), __atlas.placed.length > 20)`), 'and on again');
-    for (const v of ['hide', 'show', 'dim']) {
+    await ok(await b.js(`document.querySelector('#night button.on').dataset.v`) === 'hide', 'night-side names are hidden by default');
+    for (const v of ['show', 'dim', 'hide']) {
       await b.click(`#night button[data-v="${v}"]`);
       await serverHas(b, (e) => e.style.night === v, `night ${v}`);
       await ok(await b.js(`document.querySelector('#night button.on').dataset.v`) === v, `night side: ${v} is chosen and saved`);

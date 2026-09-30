@@ -9,6 +9,7 @@ allowed range, so the tools, their --help and .env.example agree.
     python3 tool_settings.py --example     rewrite .env.example from SPECS
     python3 tool_settings.py --check       validate .env and show the value in effect for every key
 """
+import math
 import os
 import sys
 
@@ -136,6 +137,16 @@ SPECS = [
 ]
 BY_KEY = {s['key']: s for _, group in SPECS for s in group}
 PREFIXES = ('LUNARATLAS_', 'LUNAR_FINISH_', 'MOSAIC_')
+# LUNARATLAS_-prefixed variables the tools and their tests read directly through os.environ, never through this
+# registry: real settings, so "unknown setting" would otherwise warn about every one of them whenever they are set
+# (claude-findings.md C-28). Kept here, not just at each call site, so the one list is easy to audit and keep
+# current; a typo of one of these still warns, since a typo is never exactly one of these names.
+NOT_SETTINGS = frozenset((
+    'LUNARATLAS_TOKEN', 'LUNARATLAS_DATA', 'LUNARATLAS_SELFTEST', 'LUNARATLAS_VERSION',        # the app itself
+    'LUNARATLAS_ALLOW_GPL_CODECS',                                                             # packaging/build.py
+    'LUNARATLAS_PERF_FACTOR', 'LUNARATLAS_SLOW_TESTS', 'LUNARATLAS_UI_OUT', 'LUNARATLAS_BROWSER',   # the test suite
+    'LUNARATLAS_CHROME', 'LUNARATLAS_EDGE', 'LUNARATLAS_WEBDRIVER', 'LUNARATLAS_JS_COVERAGE',
+))
 _raw, _warned = None, set()
 
 
@@ -152,7 +163,8 @@ def _read():
                         raw[k.strip()] = (v.strip().strip('"').strip("'"), '.env')
         except OSError:
             pass
-        raw.update({k: (v, 'environment') for k, v in os.environ.items() if k.startswith(PREFIXES)})
+        raw.update({k: (v, 'environment') for k, v in os.environ.items()
+                    if k.startswith(PREFIXES) and k not in NOT_SETTINGS})
         for k, (v, where) in raw.items():
             if k not in BY_KEY:
                 _warn(k, f'unknown setting {k} in {where} (a typo?); ignored')
@@ -198,6 +210,8 @@ def _convert(s, v):
         raise ValueError('expected 1 or 0')
     if k in ('int', 'float'):
         x = int(v) if k == 'int' else float(v)
+        if k == 'float' and not math.isfinite(x):        # int(v) already refuses 'nan'/'inf' on its own
+            raise ValueError('not a finite number')
         if not _in_range(s, x):
             raise ValueError(f'outside {range_text(s)}')
         return x
@@ -216,6 +230,8 @@ def _convert(s, v):
         for part in v.split(','):
             name, val = part.rsplit(':', 1)
             x = float(val)
+            if not math.isfinite(x):
+                raise ValueError(f'{name.strip()}: not a finite number')
             if not _in_range(s, x):
                 raise ValueError(f'{name.strip()}: {x:g} outside {range_text(s)}')
             out.append((name.strip(), x))

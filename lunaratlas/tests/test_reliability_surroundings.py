@@ -384,8 +384,11 @@ class HttpSurface(S.TempDir, unittest.TestCase):
         for body in (b'{not json', b'[1,2,3]', b'"text"', b'5', b'null'):
             with self.subTest(repr(body)):
                 self.assertEqual(self.v.request('/edits', body)[0], 400, body)
-        # an empty body is read as an empty object: clearing the edits is a normal thing to ask for
-        self.assertEqual(self.v.request('/edits', b'')[1]['shapes'], [])
+        # a missing or empty body is refused (claude-findings.md C-22): read as {} it would silently erase every
+        # drawing, hidden name and label move on a lost network body, a retry, or a client bug. Clearing the edits
+        # on purpose is still possible, with an explicit empty-but-well-formed object:
+        self.assertEqual(self.v.request('/edits', b'')[0], 400)
+        self.assertEqual(self.v.request('/edits', b'{}')[1]['shapes'], [])
         self.assertEqual(self.v.request('/edits')[0], 200)
         self.alive()
 

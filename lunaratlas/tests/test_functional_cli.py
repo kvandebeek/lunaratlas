@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 
 import atlas_geo as ag
+import atlas_render as ar
 import atlas_view as av
 import lunaratlas as ma
 import tool_settings as ts
@@ -90,6 +91,17 @@ class Parsing(unittest.TestCase):
         self.assertIs(ma.find_feature(feats, 'mare imb'), feats[2])
         with self.assertRaises(SystemExit):
             ma.find_feature(feats, 'Tycho')
+
+
+class RimProjection(unittest.TestCase):
+    def test_batched_rims_match_the_scalar_geometry_contract(self):
+        geo = S.truth_geometry()
+        lat, lon, diam = [0, 31.2, -42.5], [0, 47.7, -80.1], [12, 97, 181]
+        many, many_z = ar.rim_polygons(geo, lat, lon, diam, 24)
+        for i in range(len(lat)):
+            one, one_z = ar.rim_polygon(geo, lat[i], lon[i], diam[i], 24)
+            np.testing.assert_allclose(many[i], one, rtol=0, atol=1e-9)
+            np.testing.assert_allclose(many_z[i], one_z, rtol=0, atol=1e-12)
 
 
 class Optics(S.TempDir, unittest.TestCase):
@@ -218,6 +230,7 @@ class Commands(S.TempDir, unittest.TestCase):
     def test_export_validation(self):
         for args, word in ((('--scale', '1.5'), 'upscale'), (('--scale', '0'), 'positive'), (('--scale', 'nan'), 'positive'),
                            (('--font-scale', '-1'), 'positive'), (('--min-size', 'inf'), 'positive'),
+                           (('--font-scale', '100000'), '0.3'),      # claude-findings.md C-28: the .env bound applies here too
                            (('--max-size', '0'), 'at least 1'), (('--quality', '101'), '0 to 100'),
                            (('--region', '1,2,3'), 'expected 4'), (('--region', '0,0,0,10'), 'at least 1 px'),
                            (('--region', '5000,5000,10,10'), 'outside'), (('--around', 'Nowhere'), 'no feature'),
@@ -517,6 +530,29 @@ class Settings(S.TempDir, unittest.TestCase):
             self.assertEqual(ts.get('LUNARATLAS_LAYERS'), list(ts.LAYER_NAMES))   # empty: the default
         self.assertEqual(e2.getvalue().count('LUNARATLAS_FOCAL_MM'), 1)
         self.assertIn('outside 50 – 30000', e2.getvalue())
+
+    def test_variables_the_tools_read_directly_are_not_reported_as_unknown(self):
+        """claude-findings.md C-28: LUNARATLAS_DATA, _TOKEN, _SELFTEST and the rest of ts.NOT_SETTINGS are real,
+        used variables (read straight from os.environ, not through this registry), not settings typos — every
+        export from the viewer, and every test subprocess, sets one of these."""
+        err = self.env_file('', LUNARATLAS_DATA='/x', LUNARATLAS_TOKEN='t', LUNARATLAS_SELFTEST='1')
+        self.assertEqual(err, '')
+        # still caught when it is instead put in .env, where none of these do anything (they are never read there)
+        err = self.env_file('LUNARATLAS_TOKEN=t\n')
+        self.assertIn('unknown setting LUNARATLAS_TOKEN', err)
+
+    def test_nan_and_infinity_are_rejected_not_taken_as_in_range(self):
+        """claude-findings.md C-15: math.isfinite comparisons with nan/inf are always False, so the plain lo/hi
+        checks used to let both straight through as valid."""
+        self.env_file('LUNARATLAS_FOCAL_MM=nan\nLUNARATLAS_FONT_SCALE=inf\nLUNARATLAS_CAMERAS=IMX678:nan\n')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            focal, fs, cams = ts.get('LUNARATLAS_FOCAL_MM'), ts.get('LUNARATLAS_FONT_SCALE'), ts.get('LUNARATLAS_CAMERAS')
+        for name in ('LUNARATLAS_FOCAL_MM', 'LUNARATLAS_FONT_SCALE', 'LUNARATLAS_CAMERAS'):
+            self.assertIn(name, err.getvalue())
+        self.assertEqual(focal, 1200.0)
+        self.assertEqual(fs, 1.0)
+        self.assertEqual(cams, [('IMX678', 2.0), ('IMX533', 3.76), ('IMX462', 2.9)])
 
     def test_windows_line_endings(self):
         self.env_file(b'LUNARATLAS_FOCAL_MM=1500\r\nLUNARATLAS_NIGHT=dim\r\n')

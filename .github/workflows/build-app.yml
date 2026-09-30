@@ -32,6 +32,10 @@ jobs:
           python-version: '3.14'
       - name: Dependencies
         run: python -m pip install --require-hashes -r packaging/requirements-build.lock       # pinned, with hashes
+      - name: Minimal OpenCV
+        # The PyPI wheel carries FFmpeg GPL codecs that LunarAtlas does not use.  Build the pinned OpenCV source
+        # natively without video I/O; packaging/build.py verifies no forbidden codec is present afterwards.
+        run: python packaging/build_opencv_minimal.py
       - name: Inno Setup
         if: runner.os == 'Windows'
         run: command -v iscc || test -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" || choco install innosetup -y --no-progress
@@ -43,14 +47,25 @@ jobs:
       - name: Build
         run: python packaging/build.py --version "$LUNARATLAS_VERSION"
       - name: Smoke test
-        # the console twin answers, and the launcher serves its page (no browser, a scratch work folder)
+        # the console twin answers every sub-command, and the launcher serves its page and every script/style it
+        # references (no browser, a scratch work folder): this is what would have caught the app shipping without
+        # boot.js/app.js, and the CLI not knowing about `batch`
         run: |
           "${{ matrix.exe }}/lunaratlas-cli" --help
+          for c in locate export info find view app batch; do
+            "${{ matrix.exe }}/lunaratlas-cli" "$c" --help > /dev/null
+          done
           export LUNARATLAS_TOKEN=smoke-test-token           # the launcher wants its token on every request
           "${{ matrix.exe }}/lunaratlas-cli" app --no-open --port 8799 --folder "$RUNNER_TEMP/work" &
           for i in $(seq 1 60); do curl -sf -H "X-LA-Token: $LUNARATLAS_TOKEN" http://localhost:8799/app/ping && break; sleep 1; done
           curl -sf -H "X-LA-Token: $LUNARATLAS_TOKEN" http://localhost:8799/app | grep -q 'LunarAtlas'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8799/app)" = 403        # no token, no answer
+          for page in app.html index.html; do
+            for asset in $(grep -oE '(src|href)="/[^"]+"' "lunaratlas/viewer/$page" | sed -E 's/.*"(\/[^"]+)"/\1/'); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-LA-Token: $LUNARATLAS_TOKEN" "http://localhost:8799$asset")
+              [ "$code" = 200 ] || { echo "::error::$page references $asset, which the packaged app answers $code for"; exit 1; }
+            done
+          done
           curl -sf -X POST -H "X-LA-Token: $LUNARATLAS_TOKEN" -H 'Content-Type: application/json' -d '{}' http://localhost:8799/app/quit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:

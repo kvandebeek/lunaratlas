@@ -13,8 +13,8 @@ ICONS = os.path.join(SPECPATH, 'icon')                       # the icon set (ico
 a = Analysis(
     [os.path.join(SPECPATH, 'launcher.py')],
     pathex=[SRC, ROOT],
-    datas=[(os.path.join(SRC, 'viewer', f), 'viewer')
-           for f in ('index.html', 'app.html', 'viewer.js', 'viewer.css', 'theme.css', 'friendly.js', 'exif.js', 'lunaratlas.svg')]
+    datas=[(os.path.join(SRC, 'viewer', f), 'viewer')          # the whole folder, so a page script never goes missing
+           for f in os.listdir(os.path.join(SRC, 'viewer')) if os.path.isfile(os.path.join(SRC, 'viewer', f))]
           + [(os.path.join(SRC, 'fonts', fam, f), os.path.join('fonts', fam))          # bundled label fonts (OFL)
              for fam in sorted(os.listdir(os.path.join(SRC, 'fonts'))) if os.path.isdir(os.path.join(SRC, 'fonts', fam))
              for f in os.listdir(os.path.join(SRC, 'fonts', fam)) if f.endswith(('.ttf', '.txt'))],

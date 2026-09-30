@@ -37,6 +37,10 @@ from atlas_render import (DEFAULT_FONT, LAYERS, Fonts, box_of, capture_time, dra
 
 T0 = time.perf_counter()
 
+# every sub-command main() adds a parser for; the single source of truth for what the packaged launcher may run
+# directly (packaging/launcher.py) instead of treating as arguments to `app`
+COMMANDS = ('locate', 'info', 'find', 'view', 'app', 'export', 'batch')
+
 
 def log(*a):
     print(f'[{time.perf_counter() - T0:6.1f} s]', *a, flush=True)
@@ -326,6 +330,11 @@ def cmd_export(a):
     for name, v in (('--scale', a.scale), ('--font-scale', a.font_scale), ('--min-size', a.min_size)):
         if v is not None and not (math.isfinite(v) and v > 0):
             raise SystemExit(f'{name} must be a positive number')
+    # the command line skipped the same bound .env/the environment already enforce for this setting (an absurd
+    # --font-scale sized every glyph off the canvas and crashed with a bare OSError from the font sizing call)
+    fs_spec = ts.BY_KEY['LUNARATLAS_FONT_SCALE']
+    if not ts._in_range(fs_spec, a.font_scale):
+        raise SystemExit(f'--font-scale must be {ts.range_text(fs_spec)}')
     if a.scale is not None and a.scale > 1.0 + 1e-9:
         raise SystemExit('--scale above 1 would upscale beyond the captured resolution; not allowed')
     if a.max_size is not None and a.max_size < 1:
@@ -351,9 +360,9 @@ def cmd_export(a):
     if raw is None:
         raise SystemExit(f'cannot read {a.image}')
     geo = geometry(a.image, force=a.force, when=when_of(a))
-    if raw.ndim == 2:
-        raw = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
-    raw = raw[..., :3]
+    if raw.ndim == 3:                     # a mono photo (the usual lunar capture) stays 2-D as long as possible:
+        raw = raw[..., :3]               # light_levels and north_up both take either; only what draw() marks up
+                                          # (the cropped, resized output) is ever turned into three channels
     if raw.dtype not in (np.uint8, np.uint16):          # float data (0–1, or already 0–65535) -> 16-bit
         kind, f32 = raw.dtype, raw.astype(np.float32)
         top = float(np.nanmax(f32)) if f32.size else 0.0
@@ -448,6 +457,8 @@ def cmd_export(a):
 
     view = raw[y0:y0 + sh, x0:x0 + sw]
     img = view if (ow, oh) == (sw, sh) else cv2.resize(view, (ow, oh), interpolation=cv2.INTER_AREA)
+    if img.ndim == 2:         # draw() marks up in colour: only the (already cropped and resized) output needs it
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     if fmt == 'jpg':          # 16-bit -> 8-bit keeps your tonality (value / 257)
         img = cv2.convertScaleAbs(img, alpha=1 / 257.0) if img.dtype == np.uint16 else img
     else:
@@ -553,7 +564,7 @@ def add_export_options(s, output=True):
     s.add_argument('--min-size', type=float, default=ts.get('LUNARATLAS_MIN_SIZE', 24.0, float), help='smallest crater (apparent diameter, output px) that gets a name')
     s.add_argument('--font', help=f'IBM Plex Sans, "Source Sans 3", Roboto (bundled) or any Google Fonts family (default: the viewer\'s choice, else {DEFAULT_FONT})')
     s.add_argument('--font-scale', type=float, default=ts.get('LUNARATLAS_FONT_SCALE', 1.0, float), help='label size factor')
-    s.add_argument('--night', choices=['hide', 'dim', 'show'], default=ts.get('LUNARATLAS_NIGHT', 'dim'), help='names on the unlit side')
+    s.add_argument('--night', choices=['hide', 'dim', 'show'], default=ts.get('LUNARATLAS_NIGHT', 'hide'), help='names on the unlit side')
     s.add_argument('--layers', metavar='LIST', help=f"which names: comma list of {','.join(LAYERS)}, or none (default all)")
     s.add_argument('--rims', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_RIMS'), help='crater outlines')
     s.add_argument('--lettered', action=argparse.BooleanOptionalAction, default=ts.get('LUNARATLAS_LETTERED'), help='lettered satellite craters (Copernicus A, ...)')
@@ -569,6 +580,15 @@ def add_export_options(s, output=True):
 
 
 def main(argv=None):
+    # Windows only reaches UTF-16 output through the console; a redirected or piped stdout/stderr falls back to the
+    # ANSI code page (cp1252) with strict errors before Python 3.15's UTF-8-by-default (PEP 686), and log/result
+    # lines use characters outside it (≈, ″, →): `… > out.txt` or `… | more` would otherwise crash mid-run. The
+    # packaged app's own launcher.py already does this for itself; the command line needs it too.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors='replace')
+        except AttributeError:            # not a text stream (rare: a custom sys.stdout in an embedding context)
+            pass
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='cmd', required=True)
     s = sub.add_parser('locate', help='position the image on the Moon (saves IMAGE.atlas.json)')

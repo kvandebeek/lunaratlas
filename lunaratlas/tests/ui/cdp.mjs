@@ -30,7 +30,7 @@ export class Browser {
     mkdirSync(profile, { recursive: true });
     // without the three "background" switches a headless window can count as hidden (macOS occlusion) and its
     // animation frames stop: a flight to a feature would then never arrive
-    const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    const proc = spawn(chrome, ['--headless=new', '--use-mock-keychain', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
       '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--mute-audio',
       '--force-color-profile=srgb', '--disable-features=Translate,MediaRouter', `--window-size=${width},${height}`,

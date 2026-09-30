@@ -25,6 +25,8 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)         # notices.py, next to this file: importable whether run as a script or loaded by
+import notices  # noqa: E402      # path (as the tests do), from any working directory
 DIST, WORK = os.path.join(ROOT, 'dist'), os.path.join(ROOT, 'build')
 
 
@@ -76,6 +78,19 @@ def main():
         os.path.join(HERE, 'lunaratlas.spec'), env=env)
     folder = os.path.join(DIST, 'LunarAtlas')
     base = os.path.join(DIST, f'LunarAtlas-{a.version}')
+
+    # compliance: every dependency's licence must travel with the binaries, and a GPL-only codec library (which
+    # opencv-python's default wheel can bundle, although LunarAtlas does no video I/O) must not ship at all.
+    # macOS wraps `folder`'s contents into LunarAtlas.app (data under Contents/Resources, libraries under
+    # Contents/Frameworks): check and write notices there too, since that is what is actually distributed.
+    check_folders = [folder]
+    if sys.platform == 'darwin':
+        check_folders.append(os.path.join(DIST, 'LunarAtlas.app'))
+    for cf in check_folders:
+        notices.collect(os.path.join(cf, 'THIRD-PARTY-NOTICES.txt') if cf == folder
+                        else os.path.join(cf, 'Contents', 'Resources', 'THIRD-PARTY-NOTICES.txt'))
+        if not os.environ.get('LUNARATLAS_ALLOW_GPL_CODECS'):
+            notices.check_forbidden(cf)
 
     if sys.platform == 'darwin':
         app = os.path.join(DIST, 'LunarAtlas.app')

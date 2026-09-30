@@ -187,12 +187,24 @@ def similarity(cx, cy, R, theta_deg, mirror):
 
 
 # ---------------------------------------------------------------- reference map
+def https_check(url):
+    """Raise unless url is https and its host is one this program downloads from. The one place this check is
+    made, used both for a request's own URL and for every redirect it is sent to (claude-findings.md C-29: a
+    redirect used to be checked for scheme only, so an allowed host redirecting off itself, e.g. to an S3 bucket
+    or a CDN frontier, would have its target fetched and accepted unpinned)."""
+    u = urlsplit(url)
+    if u.scheme.lower() != 'https':
+        raise urllib.error.URLError(f'refusing {u.scheme or "a URL without a scheme"}: only https')
+    if (u.hostname or '').lower() not in DOWNLOAD_HOSTS:
+        raise urllib.error.URLError(f'refusing {u.hostname}: not a host LunarAtlas downloads from')
+
+
 class _HttpsOnly(urllib.request.HTTPRedirectHandler):
-    """A download that starts on https never continues on http (or ftp): a redirect off TLS is refused."""
+    """A download that starts on https from an allowed host never continues anywhere else: a redirect off TLS, or
+    to a host not in DOWNLOAD_HOSTS, is refused."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not newurl.lower().startswith('https://'):
-            raise urllib.error.URLError(f'refusing a redirect to {newurl.split(":", 1)[0]}: only https')
+        https_check(newurl)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -200,12 +212,8 @@ urllib.request.install_opener(urllib.request.build_opener(_HttpsOnly))       # f
 
 
 def https_open(url, timeout=60):
-    """urlopen for an https URL from a host this program downloads from, and only https on any redirect."""
-    u = urlsplit(url)
-    if u.scheme.lower() != 'https':
-        raise urllib.error.URLError(f'refusing {u.scheme or "a URL without a scheme"}: only https')
-    if (u.hostname or '').lower() not in DOWNLOAD_HOSTS:
-        raise urllib.error.URLError(f'refusing {u.hostname}: not a host LunarAtlas downloads from')
+    """urlopen for an https URL from a host this program downloads from, and only such a URL on any redirect."""
+    https_check(url)
     return urllib.request.urlopen(url, timeout=timeout)
 
 

@@ -7,6 +7,7 @@ of lunaratlas/fonts, the user's edits (kept in IMAGE.atlas.json under "edits") a
 """
 import hashlib
 import hmac
+import html
 import json
 import math
 import os
@@ -30,8 +31,8 @@ import numpy as np
 
 from atlas_geo import R_MOON, image_signature, load_geo, sidecar_path, write_json_atomic
 from atlas_names import load_features
-from atlas_paths import CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, private_dir, self_command
-from atlas_render import BUNDLED, FONT_DIR, Fonts, clean_label_override, clean_shapes, light_levels, rim_polygon
+from atlas_paths import CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, private_dir, self_command, temp_beside, user_dir
+from atlas_render import BUNDLED, FONT_DIR, Fonts, clean_label_override, clean_shapes, light_levels, rim_polygons
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, 'viewer')
@@ -40,12 +41,68 @@ TILE = 512
 VIEWER_FONTS = BUNDLED                          # shipped with the app: the viewer never waits for a download
 EDITS_SCHEMA = 'lunaratlas.edits/1'
 MAX_JSON = 16 << 20                             # the biggest request body the page can send (the edits: 5000 shapes)
+CACHE_LIMIT = 2 << 30                           # cached tiles + launcher thumbnails; least-recently used entries go first
 
 
 # ---------------------------------------------------------------- tiles
 def tile_dir(image):
     key = hashlib.sha1(os.path.abspath(image).encode()).hexdigest()[:16]
     return os.path.join(CACHE, key)
+
+
+def cache_size(path):
+    """Bytes below path; a disappearing cache entry is simply counted as zero."""
+    try:
+        return sum(os.path.getsize(os.path.join(root, f)) for root, _, files in os.walk(path) for f in files)
+    except OSError:
+        return 0
+
+
+def evict_cache(limit=CACHE_LIMIT, keep=()):
+    """Remove stale cache entries, then oldest entries until under ``limit``.
+
+    Tile folders record their source image and signature in meta.json.  A
+    thumbnail has no source metadata, so its file mtime is its LRU clock.  The
+    caller may protect files/folders it is about to serve or build.
+    """
+    protected = {os.path.abspath(p) for p in keep}
+    entries = []
+    for root, is_tiles in ((CACHE, True), (os.path.join(CACHE_ROOT, 'thumbs'), False)):
+        try:
+            names = os.listdir(root)
+        except OSError:
+            continue
+        for name in names:
+            path = os.path.join(root, name)
+            is_protected = os.path.abspath(path) in protected
+            stale = False
+            if is_tiles and not is_protected:
+                try:
+                    with open(os.path.join(path, 'meta.json')) as fh:
+                        meta = json.load(fh)
+                    image = meta.get('image')
+                    stale = not isinstance(image, str) or not os.path.exists(image) or meta.get('signature') != image_signature(image)
+                except (OSError, ValueError, TypeError):
+                    stale = True
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            entries.append([path, cache_size(path), mtime, stale, is_protected])
+    total = sum(e[1] for e in entries)
+    for path, size, _, stale, is_protected in sorted(entries, key=lambda e: (not e[3], e[2])):
+        if is_protected:
+            continue
+        if not stale and total <= limit:
+            continue
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            total -= size
+        except OSError:
+            pass
 
 
 def tile_version(image):
@@ -60,6 +117,21 @@ def as_loader(raw, image):
     if raw is None:
         return lambda: read_image(image)
     return raw if callable(raw) else (lambda: raw)
+
+
+def cached_loader(raw, image):
+    """as_loader(raw, image), but calling the result more than once decodes the file at most once. A first open
+    needs the full array twice over (build_tiles for the pyramid, night_side for the lighting): without this,
+    Session.__init__ paid for two full decodes of the same photo (claude-findings.md C-18). Nothing outlives
+    Session.__init__ holding this closure, so the decoded array is freed normally once it returns."""
+    load = as_loader(raw, image)
+    cache: list = []
+
+    def get():
+        if not cache:
+            cache.append(load())
+        return cache[0]
+    return get
 
 
 def tiles_complete(d, levels):
@@ -89,6 +161,7 @@ def build_tiles(image, load_raw, log):
         with open(meta_p) as fh:
             meta = json.load(fh)
         if meta.get('signature') == sig and meta.get('tile') == TILE and tiles_complete(d, meta.get('levels')):
+            os.utime(d, None)                       # LRU recency for cache eviction
             log(f'tiles from the cache ({len(meta["levels"])} levels)')
             return meta['levels']
         log('the tile cache is out of date or incomplete: building it again')
@@ -104,9 +177,9 @@ def build_tiles(image, load_raw, log):
         raise SystemExit(f'cannot write the tile cache {d}: {e.strerror or e} '
                          '(set HOME to a writable folder, or delete the cache folder)') from None
     raw = as_loader(load_raw, image)()
-    g = raw if raw.ndim == 3 else cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
-    del raw
-    g = g[..., :3]
+    g = raw if raw.ndim == 2 else raw[..., :3]      # a mono photo (the usual lunar capture) stays 2-D throughout:
+    del raw                                        # converting it to 3 channels first only triples the memory and
+                                                    # the JPEG size for tiles that would look identical either way
     if g.dtype != np.uint8:               # display stretch only (exports keep the original tonality)
         white = float(np.percentile(g[::7, ::7], 99.95))
         g = cv2.convertScaleAbs(g, alpha=250.0 / max(white, 1))
@@ -134,6 +207,7 @@ def build_tiles(image, load_raw, log):
             g = cv2.resize(g, ((w + 1) // 2, (h + 1) // 2), interpolation=cv2.INTER_AREA)
             lvl += 1
     write_json_atomic(meta_p, dict(signature=sig, tile=TILE, levels=levels, image=os.path.abspath(image)))
+    evict_cache(keep=(d,))
     log(f'tiles built: {len(levels)} levels, {sum(l["cols"] * l["rows"] for l in levels)} tiles, {time.perf_counter() - t0:.1f} s')
     return levels
 
@@ -173,9 +247,9 @@ LIGHT_VERSION = 1
 
 
 def night_side(image, load_raw, geo, side, feats, xy, log):
-    load_raw = as_loader(load_raw, image)
     """Per feature how lit it is, kept beside the tiles: it needs the pixels (or the Sun's elevation for a close-up), and
     opening the image again with the same positioning must not decode a 200 MP picture to learn it again."""
+    load_raw = as_loader(load_raw, image)
     closeup = bool((side.get('quality') or {}).get('closeup'))
     sig = image_signature(image)
     key = hashlib.sha1(json.dumps([LIGHT_VERSION, sig, geo.as_dict(), closeup, (side.get('quality') or {}).get('capture_utc'),
@@ -210,17 +284,23 @@ def page_data(image, load_raw, geo, side, levels, log):
     lat = np.array([f['lat'] for f in feats]); lon = np.array([f['lon'] for f in feats])
     x, y, z = geo.to_image(lat, lon)
     light = night_side(image, load_raw, geo, side, feats, np.stack([x, y], 1), log)
+    visible = [(f, a, b, c, li) for f, a, b, c, li in zip(feats, x, y, z, light)
+               if c >= 0.05 and -0.05 * W < a < 1.05 * W and -0.05 * H < b < 1.05 * H]
+    rim_i = [i for i, (f, *_rest) in enumerate(visible) if f['cls'] in ('crater', 'lettered', 'apollo') and f['diam'] > 0]
+    ellipses = {}
+    if rim_i:
+        rf = [visible[i][0] for i in rim_i]
+        polygons, _ = rim_polygons(geo, [f['lat'] for f in rf], [f['lon'] for f in rf], [f['diam'] for f in rf], 24)
+        for i, pts in zip(rim_i, polygons):
+            (ex, ey), (ew, eh), ang = cv2.fitEllipse(pts.astype(np.float32))
+            ellipses[i] = [round(ex, 1), round(ey, 1), round(ew / 2, 1), round(eh / 2, 1), round(ang, 1)]
     rows = []
-    for f, a, b, c, li in zip(feats, x, y, z, light):
-        if c < 0.05 or not (-0.05 * W < a < 1.05 * W and -0.05 * H < b < 1.05 * H):
-            continue
+    for i, (f, a, b, c, li) in enumerate(visible):
         r = dict(n=f['name'], c=f['cls'], t=f['type'].split(',')[0], la=round(f['lat'], 3), lo=round(f['lon'], 3),
                  d=round(f['diam'], 2), x=round(float(a), 1), y=round(float(b), 1), z=round(float(c), 3),
                  lit=round(float(min(li, 1.5)), 2), o=f['origin'], k=link_id(f['link']))
-        if f['cls'] in ('crater', 'lettered', 'apollo') and f['diam'] > 0:
-            pts, _ = rim_polygon(geo, f['lat'], f['lon'], f['diam'], 24)
-            (ex, ey), (ew, eh), ang = cv2.fitEllipse(pts.astype(np.float32))
-            r['e'] = [round(ex, 1), round(ey, 1), round(ew / 2, 1), round(eh / 2, 1), round(ang, 1)]
+        if i in ellipses:
+            r['e'] = ellipses[i]
         rows.append(r)
     log(f'{len(rows)} features on the visible side')
     from atlas_ephem import capture_time as taken_at, sky_text
@@ -328,10 +408,11 @@ class ExportJob:
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self):
-        for line in self.proc.stdout:
-            line = line.rstrip()
-            if line and 'WARN' not in line:
-                self.lines.append(line)
+        with self.proc.stdout:
+            for line in self.proc.stdout:
+                line = line.rstrip()
+                if line and 'WARN' not in line:
+                    self.lines.append(line)
         code = self.proc.wait()
         if code == 0 and os.path.exists(self.output):
             self.state = 'done'
@@ -412,14 +493,18 @@ class Session:
         """raw: the pixels, or a function that reads them, or None (read from the file when needed). They are needed only
         for a first open of an image: a repeat open uses the cached tiles and night side and never decodes it."""
         self.image = image
-        load_raw = as_loader(raw, image)
+        load_raw = cached_loader(raw, image)
         levels = build_tiles(image, load_raw, log)
+        evict_cache(keep=(tile_dir(image),))         # also clean stale entries on a repeat open, when no pyramid is rebuilt
         self.data = page_data(image, load_raw, geo, side, levels, log)
         self._json: dict[bool, bytes] = {}
         self.tiles = tile_dir(image)
         self.lock = threading.Lock()
         self.rev = 0                                # the newest revision of the edits the page has sent
         self.job: ExportJob | None = None
+        self.sid = self.data['tiles_v']             # identifies this open image (and its version) to the page: a
+                                                     # page that still shows a previous session's image must not
+                                                     # write into this one's sidecar or read this one's export job
 
     def data_json(self, launcher):
         """The page's data as JSON (fetched by the page: a script include from another site would run it there);
@@ -575,14 +660,29 @@ class Handler(BaseHTTPRequestHandler):
             return self.file(os.path.join(HERE, 'tests', 'viewer_selftest.js'), 'text/javascript')
         if p == '/data.json':
             return self.reply(s.data_json(self.srv.app is not None), 'application/json')
+        if p in ('/edits', '/export/status') and self.session_gone(s, query):
+            return
         if p == '/edits':
-            return self.json(read_edits(s.image))
+            return self.json(dict(read_edits(s.image), rev=s.rev))     # rev: only in the live response, kept out of
+                                                                        # the sidecar file itself (write_edits never
+                                                                        # writes it) so old sidecars keep parsing
         if p == '/export/status':
             return self.json(s.job.status() if s.job else dict(state='none'))
         m = re.fullmatch(r'/tiles/(\d+)/(\d+)_(\d+)\.jpg', p)
         if m:
             return self.file(os.path.join(s.tiles, m[1], f'{m[2]}_{m[3]}.jpg'), 'image/jpeg', cache=True)
         self.send_error(404)
+
+    def session_gone(self, s, query):
+        """True (after already answering 409) when the request names a session that is no longer the one open: the
+        page still shows an image this server has since replaced or closed, so it must not read or write it. False
+        (nothing sent) when the request either names no session (an older page, or a test that talks to the routes
+        directly) or names this one."""
+        sid = (parse_qs(query).get('sid') or [None])[0]
+        if sid and sid != s.sid:
+            self.json(dict(error='this image is no longer open here', gone=True), 409)
+            return True
+        return False
 
     def static(self, p):
         if p in ('/favicon.svg', '/lunaratlas.svg'):
@@ -638,31 +738,44 @@ class Handler(BaseHTTPRequestHandler):
         if s is None:
             return self.send_error(404)
         try:
+            if p == '/edits' and self.length(MAX_JSON) <= 0:
+                # a missing/empty/chunked body would otherwise read as {} and erase every drawing, hidden name and
+                # label move (a real save is always far bigger than this)
+                return self.json(dict(error='the request has no body'), 400)
             o = self.body()
         except ValueError as e:
             return self.json(dict(error=str(e)), 413 if 'Content-Length' in str(e) else 400)
         if p in ('/edits', '/export') and not isinstance(o, dict):
             return self.json(dict(error='expected a JSON object'), 400)
+        if p in ('/edits', '/export', '/reveal') and isinstance(o, dict):
+            sid = o.pop('sid', None)                # which open image the page means: absent (an older page, a
+            if sid and sid != s.sid:                # test) is allowed through; naming a session that has since
+                return self.json(dict(error='this image is no longer open here', gone=True), 409)   # been replaced
+                                                     # or closed is refused, so a page left open on a previous
+                                                     # image cannot save into, export, or reveal a different one
         if p == '/edits':
             rev = o.pop('rev', None)                # the page numbers its saves: a late one never overwrites a newer one
-            if isinstance(rev, (int, float)) and not isinstance(rev, bool):
+            if isinstance(rev, (int, float)) and not isinstance(rev, bool) and math.isfinite(rev) and abs(rev) < 1e18:
                 with s.lock:
                     stale = rev < s.rev
                     s.rev = max(s.rev, rev)
                 if stale:
-                    return self.json(dict(stale=True), 409)
+                    return self.json(dict(stale=True, rev=s.rev), 409)
+                # not finite (Infinity/NaN) or absurdly large: ignored rather than accepted, so it can never
+                # permanently poison s.rev and lock every future save out as "stale"
             try:
                 return self.json(write_edits(s.image, o, s.lock))
-            except (OSError, ValueError) as e:
+            except (OSError, ValueError, ArithmeticError) as e:
                 return self.json(dict(error=str(e)), 500)
         if p == '/export':
-            if s.job and s.job.state == 'running':
-                return self.json(dict(error='an export is already running'), 409)
-            try:
-                cmd, out = export_command(s.image, o)
-            except (TypeError, ValueError, OverflowError) as e:
-                return self.json(dict(error=f'bad export options: {e}'), 400)
-            s.job = ExportJob(cmd, out)
+            with s.lock:                            # check-and-start under one lock: two clicks (or two tabs) must
+                if s.job and s.job.state == 'running':      # not both pass the check and both start a process
+                    return self.json(dict(error='an export is already running'), 409)
+                try:
+                    cmd, out = export_command(s.image, o)
+                except (TypeError, ValueError, OverflowError) as e:
+                    return self.json(dict(error=f'bad export options: {e}'), 400)
+                s.job = ExportJob(cmd, out)
             self.srv.log('export: ' + ' '.join(cmd[2:]))
             return self.json(dict(started=True, output=out))
         if p == '/reveal':
@@ -687,12 +800,35 @@ def start_server(port, log=print, session=None, app=None, token=None):
     return srv
 
 
+def handoff_url(url):
+    """A file:// URL that redirects a browser to url, for opening it instead of handing url itself to
+    webbrowser.open(): that spawns the browser with url as a command-line argument, and on Linux (where the
+    packaged app has no app window and always opens this way) another local user can read another process's
+    argv from /proc, which would show this run's whole-lifetime access token in plain sight. The redirect file's
+    own path is not secret, only its content (what it points to), so it is written private (mode 0600, this
+    user only) and reused by every open (see claude-findings.md C-07)."""
+    d = user_dir('data')
+    private_dir(d)
+    p = os.path.join(d, 'open.html')
+    target = html.escape(url, quote=True)
+    page = (f'<!doctype html><meta charset="utf-8"><title>LunarAtlas</title>'
+           f'<meta http-equiv="refresh" content="0; url={target}">'
+           f'<body>Opening LunarAtlas… <a href="{target}">click here</a> if nothing happens.</body>').encode()
+    tmp = temp_beside(p)
+    with open(tmp, 'wb') as fh:
+        fh.write(page)
+    if os.name == 'posix':
+        os.chmod(tmp, 0o600)          # before the rename: never a moment where it is readable by anyone else
+    os.replace(tmp, p)
+    return 'file://' + os.path.abspath(p)
+
+
 def run_server(srv, open_browser=True, log=print, path='/', what='viewer'):
     """Serve until Ctrl-C. The address with the token goes to the browser this opens; it is printed only when nothing
     is opened (then it is the way in: this terminal is the user's own), never into a log file."""
     log(f'{what}: {srv.url(path, secret=not open_browser)}  (Ctrl-C to stop)')
     if open_browser:
-        threading.Timer(0.4, lambda: webbrowser.open(srv.url(path, secret=True))).start()
+        threading.Timer(0.4, lambda: webbrowser.open(handoff_url(srv.url(path, secret=True)))).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

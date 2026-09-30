@@ -29,11 +29,12 @@ import numpy as np
 
 from atlas_ephem import SHARPCAP
 from atlas_geo import load_geo, sha256_file, sidecar_path
-from atlas_paths import CACHE, private_dir, publish, self_command, temp_beside, user_dir
-from atlas_view import PAGE, ExportJob, Server, Session, reveal, run_server, start_server
+from atlas_paths import CACHE, _UMASK, private_dir, publish, self_command, temp_beside, user_dir
+from atlas_view import PAGE, ExportJob, Server, Session, handoff_url, reveal, run_server, start_server
 
 IMAGE_EXT = ('.tif', '.tiff', '.png', '.jpg', '.jpeg')
 PING = b'lunaratlas'
+THUMBNAIL_SLOTS = threading.BoundedSemaphore(2)    # TIFF/PNG decode is full-frame; do not run six at once
 MAX_UPLOAD = 4 << 30                           # one photo: mosaics of hundreds of MB are real, 4 GB is not a photo
 SPARE = 200 << 20                              # disk space an upload leaves free
 
@@ -101,6 +102,13 @@ class App:
                 return h.json(dict(error=str(e)), 400) or True
             if self.phase in ('locating', 'opening'):
                 return h.json(dict(error='busy with another image'), 409) or True
+            s = self.server.session if self.server else None
+            if s and s.job and s.job.state == 'running':
+                # opening another image would replace server.session, and with it the only reference to this
+                # export job: it would keep running but untracked (claude-findings.md C-02), reported nowhere,
+                # not stopped on quit, and ignored by the idle-exit timer
+                return h.json(dict(error='an export of the current image is still running: wait for it, or cancel '
+                                        'it from that image'), 409) or True
             self.path, self.error, self.lines = path, None, []
             if p == '/app/locate':
                 self.locate(path, bool(o.get('force')))
@@ -183,13 +191,29 @@ class App:
         """The uploaded bytes (in tmp) become dest, or the first "NAME (2)", "NAME (3)"… that is free. A file of that name
         with the very same bytes is the same photo: tmp is dropped and (its path,) returned, so its sidecar is reused.
         A different photo of the same name, even of the same size (uncompressed captures of one camera all have one),
-        gets a name of its own and the earlier photo and its positioning stay as they were. None: not inside the folder."""
+        gets a name of its own and the earlier photo and its positioning stay as they were. None: not inside the folder.
+
+        The name is claimed with a hard link, which fails if it is taken (even by another upload finishing this
+        instant): two uploads racing for the same free name can no longer both "win" and have the later rename
+        silently replace the earlier photo (claude-findings.md C-23)."""
         k = 2
         while True:
             if os.path.dirname(os.path.realpath(dest)) != os.path.realpath(self.folder):     # a symlink planted here
                 return None
-            if not os.path.lexists(dest):
-                publish(tmp, dest)
+            try:
+                os.link(tmp, dest)
+            except FileExistsError:
+                pass                        # someone else has this name now (or already had it): fall through
+            except OSError:
+                if not os.path.lexists(dest):       # e.g. no hard links on this filesystem: the old, non-atomic way
+                    publish(tmp, dest)
+                    return dest
+            else:
+                try:
+                    os.chmod(dest, 0o666 & ~_UMASK)
+                except OSError:
+                    pass
+                os.remove(tmp)
                 return dest
             if os.path.isfile(dest) and os.path.getsize(dest) == size and sha256_file(dest) == digest:
                 os.remove(tmp)
@@ -284,7 +308,11 @@ class App:
         key = hashlib.sha1(f'{path}|{st.st_size}|{st.st_mtime}'.encode()).hexdigest()[:20]
         out = os.path.join(CACHE, 'thumbs', key + '.jpg')
         if not os.path.exists(out):
-            data = thumbnail(path)
+            # OpenCV only reduces JPEG during decode.  A cold page of large
+            # TIFF mosaics otherwise starts one full-frame decode per browser
+            # connection (normally six), easily exhausting RAM.
+            with THUMBNAIL_SLOTS:
+                data = thumbnail(path)
             if data is None:
                 return h.send_error(404)
             private_dir(CACHE)
@@ -293,6 +321,10 @@ class App:
             with open(tmp, 'wb') as fh:
                 fh.write(data)
             publish(tmp, out)
+            from atlas_view import evict_cache
+            evict_cache(keep=(out,))
+        else:
+            os.utime(out, None)
         h.file(out, 'image/jpeg', cache=True)
 
     def recent(self):
@@ -322,7 +354,12 @@ def taken(path):
     EXIF time ('YYYY-MM-DD HH:MM', local), else None."""
     m = SHARPCAP.search(os.path.basename(path))
     if m:
-        return f'{m[1]}-{m[2]}-{m[3]} {m[4]}:{m[5]} UTC'
+        from datetime import datetime
+        try:
+            stamp = datetime.strptime('-'.join(m.group(1, 2, 3)) + ' ' + ':'.join(m.group(4, 5)), '%Y-%m-%d %H:%M')
+        except ValueError:
+            return None
+        return stamp.strftime('%Y-%m-%d %H:%M UTC')
     if os.path.splitext(path)[1].lower() not in ('.jpg', '.jpeg', '.tif', '.tiff'):
         return None
     try:
@@ -455,7 +492,7 @@ def run(port=8766, open_browser=True, folder=None, log=print, window=None, idle=
     if st and already_running(st['port'], st['token']):
         log(f"already running: http://localhost:{st['port']}/app")
         if not focus(st['port'], st['token']) and open_browser:
-            webbrowser.open(f"http://localhost:{st['port']}/app?t={st['token']}")
+            webbrowser.open(handoff_url(f"http://localhost:{st['port']}/app?t={st['token']}"))
         return
     webview = webview_module() if window is not False and open_browser else None
     if window and webview is None:

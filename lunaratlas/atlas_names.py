@@ -39,7 +39,8 @@ SITES = [
 
 def _read_dbf(path):
     """dBASE records as dicts; records flagged deleted ('*') are skipped. ValueError if damaged."""
-    b = open(path, 'rb').read()
+    with open(path, 'rb') as fh:
+        b = fh.read()
     if len(b) < 33:
         raise ValueError('DBF too short')
     n, hl, rl = struct.unpack('<IHH', b[4:12])

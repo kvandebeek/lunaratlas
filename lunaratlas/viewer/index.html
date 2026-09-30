@@ -81,7 +81,7 @@
     <div class="row"><span class="swatch" style="background:var(--accent)"></span><label for="l-mine">My drawings</label><span class="n" id="n-mine">0</span><label class="switch"><input type="checkbox" id="l-mine" data-layer="mine" checked><span></span></label></div>
     <div class="sep"></div>
     <div class="sub">Names on the night side</div>
-    <div class="seg" id="night" role="group" aria-label="Names on the night side"><button data-v="hide">Hide</button><button data-v="dim" class="on">Dim</button><button data-v="show">Show</button></div>
+    <div class="seg" id="night" role="group" aria-label="Names on the night side"><button data-v="hide" class="on">Hide</button><button data-v="dim">Dim</button><button data-v="show">Show</button></div>
     <div class="slider"><div class="lbl"><span>Detail</span><b id="minPxV"></b></div><input type="range" id="minPx" min="10" max="70" step="1" value="24"></div>
     <div class="slider"><div class="lbl"><span>Label size</span><b id="fsV"></b></div><input type="range" id="fs" min="0.8" max="1.6" step="0.05" value="1"></div>
     <div class="fontrow"><span>Font</span><select id="fontSel"></select></div>
@@ -95,7 +95,7 @@
   <div class="left">
     <div class="readout" id="readout"><span>Move over the Moon</span></div>
     <button class="qchip" id="gate" hidden aria-haspopup="dialog"><svg width="14" height="14"><use href="#i-warn"/></svg><span></span></button>
-    <span class="save" id="saveState"></span>
+    <span class="save" id="saveState" role="status" aria-live="polite"></span>
   </div>
   <div class="scalebar" title="Scale at the disk centre"><div class="bar" id="sbar"></div><span id="slabel"></span></div>
   <div class="zoom"><span class="pct" id="zoomPct"></span>
@@ -108,7 +108,7 @@
 
 <div class="popover" id="annot" hidden></div>
 <div class="modal" id="export" hidden></div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="/friendly.js"></script>
 <script src="/boot.js"></script>

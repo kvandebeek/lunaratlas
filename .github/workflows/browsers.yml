@@ -67,7 +67,7 @@ jobs:
           EOF
       - name: UI journeys in ${{ matrix.browser }}
         run: |
-          python -m unittest discover -v -s lunaratlas/tests -t lunaratlas/tests -p 'test_ui.py' 2>&1 | tee test.log
+          python lunaratlas/tests/run_tests.py --pattern 'test_ui.py' 2>&1 | tee test.log
           test "${PIPESTATUS[0]}" -eq 0
       - name: Nothing skipped that should have run
         # a missing download, browser, driver or Node makes the journeys skip, which would pass without testing anything

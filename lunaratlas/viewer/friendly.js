@@ -61,7 +61,6 @@ window.LA_FRIENDLY = (() => {
       return { title: 'The camera and telescope could not be worked out', text: 'None of the known setups gives a close-up at this image size.', reasons: [], raw: m };
     if (/no Moon found|could not find the limb|no limb in view|too few terrain matches|close-up not found|not positioned/i.test(m))
       return { title: 'The Moon could not be found in this photo', text: 'Check that it is a photo of the Moon with enough detail. For a close-up, enter when it was taken.', reasons: [], raw: m };
-      return { title: 'The Moon could not be found in this photo', text: 'Check that it is a photo of the Moon. For a close-up, enter when it was taken.', reasons: [], raw: m };
     if (/cannot reach|urlopen|offline|timed out|Name or service/i.test(m))
       return { title: 'The Moon maps could not be downloaded', text: 'The first run needs an internet connection once. Check the connection and try again.', reasons: [], raw: m };
     return { title: 'That did not work', text: m.charAt(0).toUpperCase() + m.slice(1), reasons: [] };

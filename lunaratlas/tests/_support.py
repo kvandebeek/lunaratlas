@@ -1,7 +1,7 @@
 """Shared helpers for the lunaratlas tests (stdlib unittest, no extra packages).
 
-    python3 -m unittest discover -s lunaratlas/tests -t lunaratlas/tests            # the whole suite
-    python3 -m unittest discover -s lunaratlas/tests -t lunaratlas/tests -p 'test_e2e*'   # one kind
+    python3 lunaratlas/tests/run_tests.py                         # the whole suite, with percent complete
+    python3 lunaratlas/tests/run_tests.py --pattern 'test_e2e*'   # one kind
     LUNARATLAS_SLOW_TESTS=1 ...          also the slow tests (close-up search, mirrored and crescent locate)
     LUNARATLAS_PERF_FACTOR=3 ...         a slower machine: every performance budget × 3
     LUNARATLAS_UI_OUT=DIR ...            keep test_ui's screenshots of failed checks in DIR
@@ -30,6 +30,7 @@ The suite is split by what it is about, so one kind can be run on its own:
 The test images are synthetic: LOLA relief lit by a chosen Sun, times the LROC albedo, seen in a known geometry, with
 blur and noise. Positioning them must give that geometry back.
 """
+import atexit
 import contextlib
 import io
 import json
@@ -52,6 +53,22 @@ ROOT = os.path.dirname(PKG)
 for p in (ROOT, PKG):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+# Every in-process test (as opposed to a CLI subprocess, which already gets its own HOME through subprocess_env())
+# must never touch the developer's real cache and data folders (~/Library/Caches/LunarAtlas and its Windows/Linux
+# equivalents): atlas_paths.user_dir() reads HOME/LOCALAPPDATA/XDG_*_HOME live, so redirecting them here, before any
+# atlas_* module is first imported anywhere in the test process, keeps every Session, App, tile pyramid, thumbnail
+# and (see atlas_view.handoff_url) hand-off file inside a folder this test run owns and removes with everything
+# else in it. This must run before `import tool_settings`, which is the first of this project's own modules any
+# test file imports.
+if not os.environ.get('_LUNARATLAS_TEST_HOME'):                # set once, even if _support is imported repeatedly
+    _test_home = tempfile.mkdtemp(prefix='lunaratlas_test_home_')
+    os.environ['_LUNARATLAS_TEST_HOME'] = _test_home
+    os.environ['HOME'] = _test_home
+    os.environ['LOCALAPPDATA'] = os.path.join(_test_home, 'AppData', 'Local')
+    os.environ['XDG_CACHE_HOME'] = os.path.join(_test_home, '.cache')
+    os.environ['XDG_DATA_HOME'] = os.path.join(_test_home, '.local', 'share')
+    atexit.register(shutil.rmtree, _test_home, True)
 
 import tool_settings as ts  # noqa: E402
 
@@ -388,4 +405,3 @@ def pixel_error(geo_a, geo_b, w, h, step=50, r_max=0.9):
     x, y, _ = geo_b.to_image(la[ok], lo[ok])
     d = np.hypot(x - xs[keep][ok], y - ys[keep][ok])
     return float(np.median(d)), float(d.max())
-

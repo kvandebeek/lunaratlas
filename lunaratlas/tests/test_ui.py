@@ -153,7 +153,7 @@ class UI(S.TempDir):
         img = self.open_image()
         self.journey('layers')
         st = self.edits(img)['style']
-        self.assertEqual(st['night'], 'dim')
+        self.assertEqual(st['night'], 'hide')
         self.assertEqual(sorted(st['layers']), ['area', 'crater', 'landing', 'lettered', 'relief'])
 
     def test_picking_several_names(self):

@@ -170,7 +170,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: var(--focus)
 .gatepop .raw { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--text-3); font: 11px/1.5 var(--font-mono); word-break: break-word; }
 
 /* ---- export dialog */
-.modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: var(--scrim); backdrop-filter: blur(2px); }
+.modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: var(--scrim); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
 .dialog { width: 600px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow: auto; padding: 22px 24px; background: var(--bg-1);
   border: 1px solid var(--line-strong); border-radius: 16px; box-shadow: var(--shadow); }
 .dialog .top { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 16px; }

@@ -7,10 +7,14 @@ import subprocess
 import threading
 import time
 import unittest
+from unittest import mock
 
 import _support as S
+import cv2
+import numpy as np
 from atlas_geo import sidecar_path
 from atlas_app import App, already_running, copy_name, taken, thumbnail
+import atlas_view as av
 from atlas_view import start_server
 
 
@@ -33,6 +37,7 @@ class RecentPhotos(S.TempDir):
     def test_capture_time_from_the_name_else_exif_else_none(self):
         from PIL import Image
         self.assertEqual(taken('/x/2026-09-27-2040_2-Moon.tif'), '2026-09-27 20:40 UTC')
+        self.assertIsNone(taken('/x/2026-02-30-2561_0-moon.tif'), 'an impossible SharpCap-looking stamp is not a date')
         p = os.path.join(self.tmp, 'camera.jpg')
         im = Image.new('L', (40, 30), 128)
         ex = im.getexif()
@@ -77,6 +82,30 @@ class RecentPhotos(S.TempDir):
 
     def test_cancel_with_nothing_running(self):
         self.assertFalse(App(self.tmp, S.quiet).cancel())
+
+    def test_cache_cleanup_drops_orphans_and_oldest_entries_but_keeps_active_one(self):
+        root = os.path.join(self.tmp, 'cache')
+        tiles = os.path.join(root, 'tiles')
+        thumbs = os.path.join(root, 'thumbs')
+        os.makedirs(tiles); os.makedirs(thumbs)
+        alive = os.path.join(self.tmp, 'alive.png')
+        cv2.imwrite(alive, np.zeros((10, 10), np.uint8))
+        def tile(name, image, payload):
+            d = os.path.join(tiles, name); os.makedirs(d)
+            with open(os.path.join(d, 'meta.json'), 'w') as fh:
+                json.dump(dict(image=image, signature=av.image_signature(image) if os.path.exists(image) else {}), fh)
+            with open(os.path.join(d, 'payload'), 'wb') as fh: fh.write(payload)
+            return d
+        keep = tile('keep', alive, b'k' * 50)
+        orphan = tile('orphan', os.path.join(self.tmp, 'gone.png'), b'o' * 50)
+        old_thumb = os.path.join(thumbs, 'old.jpg')
+        with open(old_thumb, 'wb') as fh: fh.write(b'x' * 50)
+        os.utime(old_thumb, (1, 1))
+        with mock.patch.object(av, 'CACHE_ROOT', root), mock.patch.object(av, 'CACHE', tiles):
+            av.evict_cache(limit=80, keep=(keep,))
+        self.assertTrue(os.path.isdir(keep), 'the currently open pyramid is never evicted')
+        self.assertFalse(os.path.exists(orphan), 'a deleted source leaves no permanent pyramid')
+        self.assertFalse(os.path.exists(old_thumb), 'the oldest cache entry is evicted over the cap')
 
 
 def big_endian_tiff(original, offset):
@@ -165,6 +194,35 @@ class ProgressSentences(unittest.TestCase):
         self.assertIn('capture time', closeup)
         self.assertNotIn('capture time', fit)                  # the limb fit finds the tilt itself
         self.assertIn('Refining', fit)
+
+    def error(self, msg, refused=False):
+        script = ("globalThis.window = {}; require(process.argv[1]);\n"
+                  "console.log(JSON.stringify(window.LA_FRIENDLY.error(process.argv[2], process.argv[3] === '1')));\n")
+        r = subprocess.run([NODE, '-e', script, os.path.abspath(FRIENDLY_JS), msg, '1' if refused else '0'],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_every_kind_of_failure_gets_its_own_title(self):
+        """A regression for a duplicated `return` that made every one of these but the first two say
+        'The Moon could not be found in this photo', including a full disk and being offline."""
+        cases = [
+            ('not annotated: too blurry', True, 'quality check'),
+            ('close-up needs its capture time: …', False, 'looks like a close-up'),
+            ('no optics setup fits this image size', False, 'could not be worked out'),
+            ('no Moon found in this photo', False, 'could not be found in this photo'),
+            ('cannot reach data.lroc.asu.edu: timed out', False, 'could not be downloaded'),
+            ('could not save the image: No space left on device', False, 'did not work'),
+            ('LunarAtlas stopped running.', False, 'did not work'),
+            ('the copy failed: is LunarAtlas still running?', False, 'did not work'),
+        ]
+        for msg, refused, expect in cases:
+            with self.subTest(msg=msg):
+                e = self.error(msg, refused)
+                self.assertIn(expect, e['title'])
+                if expect == 'did not work':                 # the generic fallback shows the real message
+                    self.assertIn(msg[1:], e['text'])         # only the first letter's case differs
+
 
 class SamePhotoAgain(S.TempDir):
     """An upload with the name and size of a copy already in the work folder reuses that copy and its sidecar."""
@@ -325,6 +383,65 @@ class Launcher(S.TempDir):
         self.assertEqual(st['phase'], 'failed')
         self.assertTrue(st['error'])
         self.assertEqual(self.call('GET', '/app/ping')[0], 200, 'the launcher carries on')
+
+    def open_image(self, name, **kw):
+        os.makedirs(self.folder, exist_ok=True)
+        img, _ = S.moon_image(self.folder, name, **kw)
+        self.assertEqual(self.call('POST', '/app/open', json.dumps(dict(path=img)).encode())[0], 200)
+        self.assertEqual(self.wait()['phase'], 'ready')
+        return img
+
+    def test_a_page_left_open_on_a_replaced_image_cannot_write_read_or_export_the_new_one(self):
+        """claude-findings.md C-01: opening image B must not let a page still showing image A save into B's
+        sidecar, read B's edits or export status as if they were A's, or start an export of B while claiming A."""
+        a = self.open_image('A.tif')
+        sid_a = self.call('GET', '/data.json')[1]['tiles_v']
+        b = self.open_image('B.tif', theta=10.0)
+        body = json.dumps(dict(rev=1, sid=sid_a, shapes=[dict(kind='text', x=1, y=1, label='from a stale tab')])).encode()
+        code, r = self.call('POST', '/edits', body)
+        self.assertEqual(code, 409)
+        self.assertTrue(r.get('gone'))
+        self.assertEqual(S.sidecar(b).get('edits', {}).get('shapes', []), [], "B's edits are untouched")
+        self.assertEqual(S.sidecar(a).get('edits', {}).get('shapes', []), [], "A's own sidecar is untouched too")
+        self.assertEqual(self.call('GET', f'/edits?sid={sid_a}')[0], 409)
+        self.assertEqual(self.call('GET', f'/export/status?sid={sid_a}')[0], 409)
+        self.assertEqual(self.call('POST', '/export', json.dumps(dict(sid=sid_a)).encode())[0], 409)
+        # a page that never learned a sid (an older page, or a direct API caller) still works as before
+        self.assertEqual(self.call('GET', '/edits')[0], 200)
+
+    def test_opening_another_image_is_refused_while_an_export_is_running(self):
+        """claude-findings.md C-02: opening another image must not orphan a running export — untracked, not
+        stopped on quit, invisible to the browser-mode idle timer."""
+        self.open_image('A.tif')
+        session = self.app.server.session
+        session.job = mock.Mock(state='running')
+        self.addCleanup(setattr, session, 'job', None)
+        b, _ = S.moon_image(self.folder, 'B.tif', theta=10.0)
+        code, r = self.call('POST', '/app/open', json.dumps(dict(path=b)).encode())
+        self.assertEqual(code, 409)
+        self.assertIn('export', r.get('error', ''))
+        self.assertIs(self.app.server.session, session, "the session (and its export job) wasn't replaced")
+
+    def test_two_uploads_racing_for_the_same_name_both_keep_their_own_photo(self):
+        """claude-findings.md C-23: the destination name is claimed atomically, so two uploads finishing at the
+        same instant cannot have the later one silently replace the earlier photo under one name."""
+        bodies = [f'photo {i}'.encode() * 500 for i in range(2)]
+        results = []
+
+        def up(body):
+            results.append(self.upload_bytes('same.tif', body))
+        threads = [threading.Thread(target=up, args=(b,)) for b in bodies]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        paths = {r[1]['path'] for r in results}
+        self.assertEqual(len(paths), 2, f'both uploads kept a name of their own: {results}')
+        contents = {open(p, 'rb').read() for p in paths}
+        self.assertEqual(contents, set(bodies))
+
+    def upload_bytes(self, name, body):
+        return self.call('POST', f'/app/upload?name={name}&time=', body)
 
 
 if __name__ == '__main__':

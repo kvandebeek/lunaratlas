@@ -34,9 +34,11 @@ Actions tab, or push a tag `v1.0.0` to get a draft release with the installers a
 
 | File | What it does |
 |---|---|
-| `launcher.py` | Entry point: no arguments → the launcher; a `lunaratlas.py` subcommand → that command. |
-| `lunaratlas.spec` | PyInstaller: one folder, two executables (`LunarAtlas` windowed, `lunaratlas-cli` console, which the launcher runs `locate` and `export` with). |
-| `build.py` | Runs PyInstaller and makes the platform's installer. |
+| `launcher.py` | Entry point: no arguments → the launcher; a `lunaratlas.py` subcommand (`lunaratlas.COMMANDS`, the CLI's own list) → that command. |
+| `lunaratlas.spec` | PyInstaller: one folder, two executables (`LunarAtlas` windowed, `lunaratlas-cli` console, which the launcher runs `locate` and `export` with), the whole `viewer/` folder bundled as data so a page script can never go missing. |
+| `build.py` | Runs PyInstaller, writes the third-party notices and checks for GPL-only codec libraries (`notices.py`), and makes the platform's installer. |
+| `build_opencv_minimal.py` | Rebuilds the pinned OpenCV source without FFmpeg/video I/O before a release build, so the app ships only the still-image functionality it uses. |
+| `notices.py` | Collects every dependency's own licence text into `THIRD-PARTY-NOTICES.txt` in the built app, and fails the build if a GPL-only library (x264, x265, …, which OpenCV's default wheel can bundle although LunarAtlas does no video I/O) is found in it. Override with `LUNARATLAS_ALLOW_GPL_CODECS=1` while that is being fixed at the source (rebuild `opencv-python-headless` with `WITH_FFMPEG=OFF`). |
 | `windows/lunaratlas.iss` | Inno Setup script. |
 | `linux/` | `.desktop` entry and `install.sh`. |
 | `icon/` | The app icon: SVG masters, `macos/LunarAtlas.icns`, `windows/LunarAtlas.ico`, `linux/hicolor/` (see `icon/README.md`). The pages use `svg/lunaratlas.svg` as their favicon (`lunaratlas/viewer/lunaratlas.svg`). |

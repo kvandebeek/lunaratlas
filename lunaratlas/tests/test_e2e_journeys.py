@@ -397,7 +397,7 @@ class BrowserJourneys(Journey):
         profile = os.path.join(self.tmp, 'chrome-profile')
         dom, err = os.path.join(self.tmp, 'dom.html'), os.path.join(self.tmp, 'chrome.log')
         with open(dom, 'w') as out, open(err, 'w') as log:              # Chrome's helpers keep the pipe open
-            proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--no-first-run',
+            proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--use-mock-keychain', '--no-first-run',
                                      '--no-default-browser-check', f'--user-data-dir={profile}',
                                      '--window-size=1400,900', f'--virtual-time-budget={budget}',
                                      '--dump-dom', f'{v.url}/selftest?group={group}&t={v.token}'], stdout=out, stderr=log)
@@ -473,4 +473,3 @@ class BrowserJourneys(Journey):
 
 if __name__ == '__main__':
     unittest.main()
-

@@ -15,7 +15,7 @@ import zipfile
 from urllib.parse import urlparse
 
 import _support as S
-from atlas_geo import download, https_open, sha256_file, write_atomic
+from atlas_geo import download, https_open, sha256_file, sidecar_path, write_atomic
 from atlas_paths import publish, temp_beside
 
 
@@ -109,11 +109,27 @@ class ViewerIsLocalOnly(unittest.TestCase):
         self.assertEqual(save(big + 2, 'newer')[0], 200)
         code, _, body = save(big + 1, 'older')                          # an old request that arrives late
         self.assertEqual(code, 409)
+        self.assertEqual(json.loads(body)['rev'], big + 2, 'the refusal says the current revision')
         self.assertEqual(json.loads(self.req('GET', '/edits')[2])['shapes'][0]['label'], 'newer')
         self.assertEqual(save(big + 3, 'newest')[0], 200)
-        self.assertEqual(json.loads(self.req('GET', '/edits')[2])['shapes'][0]['label'], 'newest')
-        self.assertNotIn('rev', json.loads(self.req('GET', '/edits')[2]), 'the number is not stored in the sidecar')
+        latest = json.loads(self.req('GET', '/edits')[2])
+        self.assertEqual(latest['shapes'][0]['label'], 'newest')
+        self.assertEqual(latest['rev'], big + 3, 'the live response carries the current revision')
+        with open(sidecar_path(self.img), encoding='utf-8') as fh:
+            self.assertNotIn('rev', json.load(fh)['edits'], 'the number is not stored in the sidecar file')
         self.assertEqual(self.req('POST', '/edits', {'Content-Type': 'application/json'}, b'{}')[0], 200, 'a save without one is as before')
+
+    def test_a_non_finite_revision_is_ignored_rather_than_locking_out_every_later_save(self):
+        """rev: Infinity (JSON, not standard but accepted by Python's parser) or a huge number must not become the
+        server's high-water mark forever: that would make every future save 409 for the rest of the run."""
+        def save(body):
+            return self.req('POST', '/edits', {'Content-Type': 'application/json'}, body)
+        start = json.loads(self.req('GET', '/edits')[2])['rev']         # other tests in this class share the server
+        self.assertEqual(save(b'{"rev": Infinity, "shapes": []}')[0], 200)
+        self.assertEqual(save(json.dumps(dict(rev=10 ** 30, shapes=[])).encode())[0], 200)
+        code, _, _ = save(json.dumps(dict(rev=start + 1, shapes=[dict(kind='text', x=1, y=1, label='still works')])).encode())
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(self.req('GET', '/edits')[2])['shapes'][0]['label'], 'still works')
 
     def test_the_banner_names_no_interpreter(self):
         _, hdr, _ = self.req('GET', '/')
@@ -312,13 +328,18 @@ class Downloads(S.TempDir):
             https_open('https://evil.example/f')             # https, but not a host it downloads from
         self.assertEqual(os.listdir(self.tmp), [])
 
-    def test_a_redirect_off_tls_is_refused(self):
-        from atlas_geo import _HttpsOnly
+    def test_a_redirect_off_tls_or_off_the_allowed_hosts_is_refused(self):
+        # claude-findings.md C-29: a redirect used to be checked for https only, so an allowed host redirecting to
+        # a different one (an S3 bucket, a CDN frontier) would have its target fetched and accepted unpinned
+        from atlas_geo import DOWNLOAD_HOSTS, _HttpsOnly
         h = _HttpsOnly()
-        req = urllib.request.Request('https://example.com/a')
+        allowed = next(iter(DOWNLOAD_HOSTS))
+        req = urllib.request.Request(f'https://{allowed}/a')
         with self.assertRaises(urllib.error.URLError):
-            h.redirect_request(req, io.BytesIO(), 302, 'Found', {}, 'http://example.com/b')
-        self.assertIsNotNone(h.redirect_request(req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b'))
+            h.redirect_request(req, io.BytesIO(), 302, 'Found', {}, f'http://{allowed}/b')            # off https
+        with self.assertRaises(urllib.error.URLError):
+            h.redirect_request(req, io.BytesIO(), 302, 'Found', {}, 'https://evil.example/b')  # https, wrong host
+        self.assertIsNotNone(h.redirect_request(req, io.BytesIO(), 302, 'Found', {}, f'https://{allowed}/b'))
 
     def test_the_checksum_and_the_size_are_enforced(self):
         payload = b'lunar' * 1000
@@ -405,6 +426,32 @@ class TemporaryFiles(S.TempDir):
         d = os.path.join(self.tmp, 'a', 'b')
         private_dir(d)
         self.assertEqual(os.stat(d).st_mode & 0o777, 0o700)
+
+
+class HandoffFile(unittest.TestCase):
+    """atlas_view.handoff_url: the run's whole-lifetime token must never become a browser process's command-line
+    argument (readable by any other local user through /proc on Linux), only the content of a private file."""
+
+    def test_the_token_is_only_in_the_files_content_never_in_the_returned_url(self):
+        from atlas_view import handoff_url
+        target = 'http://localhost:12345/app?t=SUPER-SECRET-TOKEN&group=x'
+        url = handoff_url(target)
+        self.assertTrue(url.startswith('file://'), url)
+        self.assertNotIn('SUPER-SECRET-TOKEN', url)
+        path = url[len('file://'):]
+        with open(path, encoding='utf-8') as fh:
+            page = fh.read()
+        self.assertIn('SUPER-SECRET-TOKEN', page)
+        # the URL is HTML-escaped for the attribute it sits in (an unescaped & would end the attribute early)
+        self.assertIn('http://localhost:12345/app?t=SUPER-SECRET-TOKEN&amp;group=x', page)
+        if os.name == 'posix':
+            self.assertEqual(oct(os.stat(path).st_mode)[-3:], '600', 'readable by no one else')
+
+    def test_is_reused_not_left_behind_on_every_open(self):
+        from atlas_view import handoff_url
+        first = handoff_url('http://localhost:1/a')
+        second = handoff_url('http://localhost:1/b')
+        self.assertEqual(first, second, 'one file, its content replaced each time, not one per open')
 
 
 class SomeoneElsesSidecar(S.TempDir):

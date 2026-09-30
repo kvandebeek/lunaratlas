@@ -103,8 +103,14 @@ class Fonts:
             if want:
                 log(f'downloading font {family} ({len(want)} files, once)')
                 open(pending, 'w').close()
-                for e in want:
-                    download(e['download_url'], os.path.join(d, e['name']), self._font_ok, max_bytes=30_000_000)
+                try:
+                    for e in want:
+                        download(e['download_url'], os.path.join(d, e['name']), self._font_ok, max_bytes=30_000_000)
+                except (OSError, urllib.error.URLError) as e:
+                    # .incomplete is left in place on purpose: the next call finds it and downloads the family
+                    # again, rather than using a part-downloaded font. A bare network error would otherwise
+                    # escape as a traceback instead of the same clear message every other download failure gets.
+                    raise SystemExit(f'font {family}: download failed ({e}); try again') from None
                 os.remove(pending)
                 files = [e['name'] for e in want]
         return self._describe(d, files)
@@ -171,6 +177,27 @@ def rim_polygon(geo, lat, lon, diam_km, n=40):
     p = math.cos(a) * c + math.sin(a) * (np.cos(t)[:, None] * east + np.sin(t)[:, None] * north)
     x, y, z = geo.to_image(np.degrees(np.arcsin(p[:, 2])), np.degrees(np.arctan2(p[:, 1], p[:, 0])))
     return np.stack([x, y], 1), z
+
+
+def rim_polygons(geo, lat, lon, diam_km, n=40):
+    """Projected outlines for many circular features in one geometry call.
+
+    The viewer needs roughly six thousand of these on a full-disk image.  The
+    scalar :func:`rim_polygon` remains useful to the renderer, while this form
+    avoids repeatedly constructing the same-sized local arrays and entering
+    ``Geometry.to_image`` once per crater.
+    """
+    lat, lon, diam_km = (np.asarray(v, float).reshape(-1) for v in (lat, lon, diam_km))
+    la, lo = np.radians(lat), np.radians(lon)
+    c = np.stack([np.cos(la) * np.cos(lo), np.cos(la) * np.sin(lo), np.sin(la)], 1)
+    east = np.stack([-np.sin(lo), np.cos(lo), np.zeros_like(lo)], 1)
+    north = np.cross(c, east)
+    t = np.linspace(0, 2 * math.pi, n, endpoint=False)
+    a = diam_km / 2 / R_MOON
+    p = (np.cos(a)[:, None, None] * c[:, None, :] + np.sin(a)[:, None, None] *
+         (np.cos(t)[None, :, None] * east[:, None, :] + np.sin(t)[None, :, None] * north[:, None, :]))
+    x, y, z = geo.to_image(np.degrees(np.arcsin(p[..., 2])), np.degrees(np.arctan2(p[..., 1], p[..., 0])))
+    return np.stack([x, y], -1), z
 
 
 def sky_radius(shape, geo):
@@ -537,10 +564,15 @@ SHAPE_GEOMETRY = dict(circle=('cx', 'cy', 'r'), ellipse=('x0', 'y0', 'x1', 'y1')
 
 
 def _num(v):
-    """A finite JSON number, else None (bools are not numbers here)."""
+    """A finite JSON number, else None (bools are not numbers here). A JSON integer with hundreds of digits is
+    still a valid int, but float() of it raises OverflowError rather than returning inf: caught here so a hostile
+    or damaged sidecar drops the one bad shape instead of crashing the export or the /edits request that reads it."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    v = float(v)
+    try:
+        v = float(v)
+    except OverflowError:
+        return None
     return v if math.isfinite(v) else None
 
 

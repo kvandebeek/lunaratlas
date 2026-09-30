@@ -3,8 +3,6 @@ lunaratlas.py subcommand that command (the launcher runs locate and export this 
 import os
 import sys
 
-COMMANDS = ('locate', 'export', 'info', 'find', 'view', 'app')
-
 
 def log_to_file():
     """A windowed app has no terminal: its output goes to lunaratlas.log in the app's data folder."""
@@ -33,13 +31,13 @@ def main():
             stream.reconfigure(encoding='utf-8', errors='replace')
         except AttributeError:                                          # None (windowed) or not a text stream
             pass
-    if not args or args[0] not in COMMANDS:
+    import lunaratlas                                    # COMMANDS: lunaratlas.py's own sub-commands, the single
+    if not args or args[0] not in lunaratlas.COMMANDS:   # source of truth, so a new one is never missed here
         if sys.stdout is None or not sys.stdout.isatty():
             log_to_file()
         # an app window when pywebview is built in; else the browser, and then the launcher stops by itself
         # three minutes after its last page was closed
         args = ['app', '--idle-exit', '180'] + args
-    import lunaratlas
     lunaratlas.main(args)
 
 

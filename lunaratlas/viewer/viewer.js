@@ -72,7 +72,7 @@
   let hiddenSet = new Set();
   const view = { s: 1, x: A.width / 2, y: A.height / 2 };
   const set = { area: true, crater: true, lettered: true, relief: true, landing: true, rims: false, grid: false, mine: true,
-                night: 'dim', minPx: 24, fs: 1, font: 'IBM Plex Sans' };
+                night: 'hide', minPx: 24, fs: 1, font: 'IBM Plex Sans' };
   const undo = [], redo = [];
   const snap = () => JSON.stringify({ shapes: E.shapes, hidden: [...hiddenSet], labels: E.labels });
   function change(fn) {                       // every edit goes through here: undo point, apply, save
@@ -84,19 +84,46 @@
   function doRedo() { if (!redo.length) { toast('Nothing to redo'); return; } closeEditor(true); undo.push(snap()); restore(redo.pop()); if (selected) select(selected); toast('Redone'); }
   let saveT = null, dirty = false, inflight = 0, chain = Promise.resolve();
   let rev = Date.now();                       // every save is numbered (later than any earlier page's): the server drops a late one
+  let sessionGone = false;                    // this image is no longer the one open on the server (another tab, or
+                                              // the launcher, replaced or closed it): saving is stopped for good
   function body() {
     E.hidden = [...hiddenSet];
     E.style = { font: set.font, minPx: set.minPx, fs: set.fs, night: set.night, grid: set.grid, rims: set.rims,
                 layers: LAYERS5.filter((l) => set[l]) };
-    return JSON.stringify({ ...E, rev: ++rev });
+    return JSON.stringify({ ...E, rev: ++rev, sid: A.tiles_v });
   }
+  function clearPending() { try { localStorage.removeItem(PENDING); } catch { /* no storage */ } }
   // One save after the other, each with the edits as they are when it starts. Rejects when the edits could not be saved.
   function post() {
     const send = () => {
+      if (sessionGone) return Promise.resolve();      // stop for good: nothing left to save this image with
       dirty = false; inflight++;
       return fetch('/edits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body() })
         .finally(() => { inflight--; })
-        .then((r) => { if (!r.ok && r.status !== 409) throw new Error(r.status); $('#saveState').textContent = 'saved'; })   // 409: a newer one is there
+        .then(async (r) => {
+          if (r.ok) { $('#saveState').textContent = 'saved'; clearPending(); return; }
+          const j = await r.json().catch(() => ({}));
+          if (r.status === 409 && j.gone) {           // this image was replaced or closed elsewhere: irrecoverable
+            sessionGone = true;
+            $('#saveState').textContent = 'not saved — this image was closed in another window · reload to keep editing';
+            toast('This image was closed in another window · reload the page to keep editing it');
+            return;
+          }
+          if (r.status === 409) {                     // this request was superseded by a higher revision
+            if (typeof j.rev === 'number' && j.rev > rev) {
+              // a genuinely later write, from another tab on this same image: say so, and catch our own
+              // revision counter up so the next edit is accepted instead of being rejected forever
+              rev = j.rev;
+              $('#saveState').textContent = 'not saved — edited in another window just now';
+              toast('This image was edited in another window: your last change was not saved');
+              return;
+            }
+            $('#saveState').textContent = 'saved';     // our own later request already landed this content
+            clearPending();
+            return;
+          }
+          throw new Error(r.status);
+        })
         .catch((e) => { dirty = true; $('#saveState').textContent = 'not saved — is lunaratlas view still running?'; throw e; });
     };
     const p = chain.then(send, send);
@@ -104,6 +131,7 @@
     return p;
   }
   function save() {
+    if (sessionGone) return;
     $('#n-mine').textContent = E.shapes.length;
     $('#saveState').textContent = 'saving…';
     dirty = true;
@@ -113,14 +141,20 @@
   const flush = () => { clearTimeout(saveT); saveT = null; return post(); };
   // Leaving the page (a reload, a closed tab, the link to the launcher) must not lose an edit still waiting for its timer.
   // The request sent while leaving may still be on its way when the page loads again: the edits are also kept here, and
-  // the next load takes them up (and saves them again, which is harmless when the server has them already).
+  // the next load takes them up again — but only while the server has not already seen this revision or a later one
+  // (compared through GET /edits' own "rev"), so a snapshot that was in fact saved (by this tab's own later request,
+  // by the unload request itself landing, or by another tab) never rolls back what has since been written (C-04).
   const PENDING = 'lunaratlas.pending.' + A.tiles_v;
   function leave() {
-    if (!dirty && !saveT && !inflight) return;                        // a save still on its way may be cut off by the leaving
+    if (sessionGone || (!dirty && !saveT && !inflight)) return;    // a save still on its way may be cut off by leaving
     clearTimeout(saveT); saveT = null; dirty = false;
     const b = body();
     try { localStorage.setItem(PENDING, b); } catch { /* no storage: the request below is all there is */ }
-    try { fetch('/edits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: b, keepalive: b.length < 60000 }).catch(() => {}); } catch { /* too large to send while leaving */ }
+    try {
+      fetch('/edits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: b, keepalive: b.length < 60000 })
+        .then((r) => { if (r.ok) clearPending(); })      // acknowledged while the tab is still alive (a mere tab
+        .catch(() => {});                                // switch, not a real unload): the snapshot is redundant
+    } catch { /* too large to send while leaving */ }
   }
   addEventListener('pagehide', leave);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') leave(); });
@@ -553,10 +587,10 @@
   function fit() {
     const d = 2 * A.radius_px * 1.04;
     if (d > 1.15 * Math.max(A.width, A.height)) {            // a close-up: the photo, not the whole Moon, fills the view
-      const s = Math.min((VW - 380) / A.width, (VH - 150) / A.height);
+      const s = Math.max(0.02, Math.min((VW - 380) / A.width, (VH - 150) / A.height));   // a narrow window: never 0 or negative
       view.s = s; view.x = A.width / 2; view.y = A.height / 2 + 8 / s; redraw(); return;
     }
-    const s = Math.min((VW - 40) / d, (VH - 150) / d, VW / A.width, VH / A.height);
+    const s = Math.max(0.02, Math.min((VW - 40) / d, (VH - 150) / d, VW / A.width, VH / A.height));
     view.s = s; view.x = G.t[0]; view.y = G.t[1] + 8 / s; redraw();
   }
   const minS = () => Math.min(VW / A.width, VH / A.height) * 0.3, maxS = 4;
@@ -943,6 +977,16 @@
     zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * k));
     placeEditor();
   }, { passive: false });
+  // WebKit only (Safari, and the app window's WKWebView): a trackpad pinch is not a ctrl-wheel there, it is these
+  // non-standard events with their own running e.scale; every other browser already zooms through ctrl-wheel above
+  let gestureScale = 1;
+  canvas.addEventListener('gesturestart', (e) => { e.preventDefault(); gestureScale = e.scale; });
+  canvas.addEventListener('gesturechange', (e) => {
+    e.preventDefault();
+    zoomAt(e.clientX - canvas.getBoundingClientRect().left, e.clientY - canvas.getBoundingClientRect().top, e.scale / gestureScale);
+    gestureScale = e.scale;
+    placeEditor();
+  });
 
   // ------------------------------------------------------------ tools + keys
   function setTool(t) {
@@ -972,14 +1016,16 @@
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'z') { if (e.target.matches('input, textarea')) return; e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
     if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); return; }
+    if (e.key === 'Escape') {                     // must work even with focus on a radio, checkbox or the label
+      const exp = $('#export');                   // field inside the export dialog or the drawing editor (C-27)
+      if (!exp.hidden) { if (!jobRunning) { exp.hidden = true; $('#exportBtn').focus(); } return; }
+      if (draft) draft = null; else if (editing) closeEditor(); else if (picks.size) clearPicks(); else select(null);
+      redraw();
+      return;
+    }
     if (e.target.matches('input, select, textarea')) return;
     const k = e.key.toLowerCase();
     if (k === '/') { e.preventDefault(); $('#q').focus(); $('#q').select(); }
-    else if (k === 'escape') {
-      if (!$('#export').hidden) { if (!jobRunning) $('#export').hidden = true; return; }
-      if (draft) draft = null; else if (editing) closeEditor(); else if (picks.size) clearPicks(); else select(null);
-      redraw();
-    }
     else if (k === 'enter') closeOutline();
     else if (k === 'f') fit();
     else if (k === '1') flyTo(view.x, view.y, 1);
@@ -1025,7 +1071,7 @@
     const el = $('#export');
     const [vx0, vy0] = img(0, 0), [vx1, vy1] = img(VW, VH);
     const vr = [Math.max(0, Math.round(vx0)), Math.max(0, Math.round(vy0)), Math.min(A.width, Math.round(vx1)), Math.min(A.height, Math.round(vy1))];
-    el.innerHTML = `<div class="dialog" role="dialog" aria-label="Export">
+    el.innerHTML = `<div class="dialog" role="dialog" aria-label="Export" aria-modal="true" tabindex="-1">
       <div class="top"><div>
         <h2>Export labelled image</h2>
         <p class="lead">Names, your drawings and measurements are drawn into your image at 1:1 or smaller, never upscaled.</p>
@@ -1058,13 +1104,26 @@
       <div class="foot"><button class="btn ghost" id="xCancel">Close</button><button class="btn" id="xReveal" hidden>Show in Finder</button><button class="btn primary" id="xGo"><svg width="15" height="15"><use href="#i-down"/></svg>Export</button></div>
     </div>`;
     el.hidden = false;
+    const returnFocus = document.activeElement;
+    el.querySelector('.dialog').focus();          // a screen reader announces the dialog's name, Tab reaches its
+                                                  // controls from there; a plain click still goes straight to them
+    el.addEventListener('keydown', (e) => {        // a simple focus trap: Tab and Shift+Tab stay inside the dialog
+      if (e.key !== 'Tab') return;
+      const items = [...el.querySelectorAll('input:not(:disabled), button:not(:disabled), [tabindex]')];
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    const closeExport = () => { el.hidden = true; (returnFocus && document.contains(returnFocus) ? returnFocus : $('#exportBtn')).focus(); };
     const opts = () => {
       const north = $('#xNorth').checked, viewRadio = el.querySelector('[name=reg][value=view]');
       viewRadio.disabled = north;                  // the view's box counts pixels of the picture as it was taken
       if (north && viewRadio.checked) el.querySelector('[name=reg][value=all]').checked = true;
       const reg = el.querySelector('[name=reg]:checked').value, sc = el.querySelector('[name=sc]:checked').value, fmt = el.querySelector('[name=fmt]:checked').value;
       let w = A.width, h = A.height;
-      const o = { format: fmt, scale: sc === '1' ? null : sc, max_size: +$('#maxSide').value || 4096, names: $('#xNames').checked,
+      const maxSide = clamp(+$('#maxSide').value || 4096, 256, 20000);       // the field's min= is not enforced on every keystroke
+      const o = { format: fmt, scale: sc === '1' ? null : sc, max_size: maxSide, names: $('#xNames').checked,
                   layers: LAYERS5.filter(shown), rims: $('#xRims').checked, grid: $('#xGrid').checked,
                   drawings: $('#xMine').checked, info: $('#xInfo').checked, night: set.night, min_px: set.minPx, font_scale: set.fs, font: set.font };
       if (north) o.north_up = true;
@@ -1079,28 +1138,43 @@
     };
     el.querySelectorAll('input').forEach((i) => i.addEventListener('input', opts));
     opts();
-    $('#xCancel').onclick = () => { if (!jobRunning) el.hidden = true; };
-    el.onclick = (e) => { if (e.target === el && !jobRunning) el.hidden = true; };
-    $('#xReveal').onclick = () => fetch('/reveal', { method: 'POST', body: '{}' });
+    $('#xCancel').onclick = () => { if (!jobRunning) closeExport(); };
+    el.onclick = (e) => { if (e.target === el && !jobRunning) closeExport(); };
+    $('#xReveal').onclick = () => fetch('/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid: A.tiles_v }) });
     $('#xGo').onclick = async () => {
       try { await flush(); } catch {                // the export reads the drawings from the sidecar: not saved, it would leave them out
         toast('Your drawings could not be saved, so the export was not started. Is LunarAtlas still running?'); return;
       }
-      const r = await fetch('/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts()) });
-      const j = await r.json();
+      let r, j;
+      try {
+        r = await fetch('/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...opts(), sid: A.tiles_v }) });
+        j = await r.json();
+      } catch { toast('Export could not start — is LunarAtlas still running?'); return; }
       if (!r.ok) { toast(j.error || 'Export could not start'); return; }
       jobRunning = true; $('#xGo').disabled = true; $('#xProg').hidden = false; $('#xReveal').hidden = true;
       const bar = el.querySelector('.progress .bar > div'), steps = ['positioning', 'view:', 'labels placed', 'labels drawn', 'wrote'];
       bar.classList.remove('failed');
+      let pollFails = 0;
+      const giveUp = (msg) => { jobRunning = false; $('#xGo').disabled = false; bar.style.width = '100%'; bar.classList.add('failed'); toast(msg); };
       const poll = async () => {
-        const s = await (await fetch('/export/status')).json();
-        $('#xLog').textContent = s.lines.join('\n');
+        let s;
+        try {
+          const resp = await fetch('/export/status');
+          if (!resp.ok) throw new Error(resp.status);
+          s = await resp.json();
+        } catch {
+          // a hiccup (the launcher restarted, a network blip) leaves the dialog stuck open forever otherwise
+          if (++pollFails < 5) { setTimeout(poll, 800); return; }
+          return giveUp('Lost contact with LunarAtlas — the export may still be running');
+        }
+        pollFails = 0;
+        $('#xLog').textContent = (s.lines || []).join('\n');
         $('#xLog').scrollTop = 1e9;
-        const done = steps.filter((k) => s.lines.some((l) => l.includes(k))).length;
+        const done = steps.filter((k) => (s.lines || []).some((l) => l.includes(k))).length;
         bar.style.width = (s.state === 'done' ? 100 : Math.min(95, 10 + 85 * done / steps.length)) + '%';
         if (s.state === 'running') { setTimeout(poll, 400); return; }
         jobRunning = false; $('#xGo').disabled = false;
-        if (s.state === 'done') { toast(`Written: ${s.output.split('/').pop()} (${(s.size_bytes / 1e6).toFixed(1)} MB)`); $('#xReveal').hidden = false; }
+        if (s.state === 'done') { toast(`Written: ${String(s.output || '').split(/[\\/]/).pop()} (${(s.size_bytes / 1e6).toFixed(1)} MB)`); $('#xReveal').hidden = false; }
         else { bar.style.width = '100%'; bar.classList.add('failed'); toast('Export failed: ' + (s.error || '')); }
       };
       poll();
@@ -1175,8 +1249,17 @@
   function resize() {
     dpr = window.devicePixelRatio || 1; VW = window.innerWidth; VH = window.innerHeight;
     canvas.width = Math.round(VW * dpr); canvas.height = Math.round(VH * dpr); redraw();
+    watchDpr();
   }
   window.addEventListener('resize', resize);
+  // devicePixelRatio changes without a resize event when the window moves to a screen of a different pixel
+  // density (an external 1x monitor to a Retina one): matchMedia is the only way to hear about that
+  let dprQuery = null;
+  function watchDpr() {
+    if (dprQuery) dprQuery.removeEventListener('change', resize);
+    dprQuery = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    dprQuery.addEventListener('change', resize, { once: true });
+  }
   function applyStyle(st) {
     if (!st) return;
     if (st.font && (A.fonts || []).includes(st.font)) { set.font = st.font; fontSel.value = st.font; }
@@ -1193,9 +1276,9 @@
       const f = FE.find((o) => o.key === norm(h.get('q')));
       if (f) { view.s = clamp(f.dpx > 0 ? 0.28 * Math.min(VW, VH) / f.dpx : 1, minS(), 1.5); view.x = f.x; view.y = f.y; select(f); }
     }
-    if (h.has('s')) view.s = +h.get('s');
-    if (h.has('x')) view.x = +h.get('x');
-    if (h.has('y')) view.y = +h.get('y');
+    if (h.has('s')) { const s = +h.get('s'); if (isFinite(s) && s > 0) view.s = clamp(s, minS(), maxS); }
+    if (h.has('x')) { const x = +h.get('x'); if (isFinite(x)) view.x = x; }
+    if (h.has('y')) { const y = +h.get('y'); if (isFinite(y)) view.y = y; }
     if (h.has('export')) openExport();
     redraw();
   }
@@ -1206,9 +1289,12 @@
   fetch('/edits').then((r) => r.json()).then((e) => {
     try {
       const p = JSON.parse(localStorage.getItem(PENDING) || 'null');
-      localStorage.removeItem(PENDING);
-      if (p && Array.isArray(p.shapes)) { e = p; setTimeout(save, 0); }
+      // only replay a pending snapshot the server has not already seen: e.rev is the server's live revision, and
+      // a snapshot at or below it was already saved (by this tab's own later save, its own unload request landing,
+      // or another tab) — replaying it regardless would silently roll that later, saved work back (C-04)
+      if (p && Array.isArray(p.shapes) && typeof p.rev === 'number' && p.rev > (e.rev || 0)) { e = p; rev = p.rev; setTimeout(save, 0); }
     } catch { /* no storage */ }
+    clearPending();
     E = { shapes: Array.isArray(e.shapes) ? e.shapes : [], hidden: [], labels: e.labels || {}, style: e.style || {} };
     hiddenSet = new Set(Array.isArray(e.hidden) ? e.hidden : []);
     applyStyle(E.style); syncLettered();

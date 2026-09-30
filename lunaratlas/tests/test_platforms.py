@@ -4,6 +4,7 @@ A CI runner only takes its own platform's branch; these tests take every branch 
 packaged app; app window and browser) by standing in for sys.platform, the environment and pywebview, so a slip in
 the Windows folder is caught on a Mac and the other way round.
 """
+import argparse
 import importlib.util
 import os
 import shutil
@@ -133,6 +134,33 @@ class PackagedEntryPoint(S.TempDir):
         args, _ = self.run_main(['locate', 'moon.tif'])
         self.assertEqual(args, ['locate', 'moon.tif'])
 
+    def test_batch_runs_that_command(self):
+        """batch was added to the CLI after the launcher's own command list; regression for it being missed again."""
+        args, _ = self.run_main(['batch', 'folder'])
+        self.assertEqual(args, ['batch', 'folder'])
+
+    def test_every_cli_subcommand_is_routed_directly(self):
+        """lunaratlas.COMMANDS (what the launcher treats as a command, not as arguments to `app`) matches every
+        sub-parser lunaratlas.main() actually builds, so a new subcommand cannot be missed here again."""
+        import lunaratlas
+        p = argparse.ArgumentParser()
+        real_add_subparsers = argparse.ArgumentParser.add_subparsers
+        names = []
+
+        def spy(self, *a, **k):
+            sub = real_add_subparsers(self, *a, **k)
+            real_add_parser = sub.add_parser
+
+            def add_parser(name, *a, **k):
+                names.append(name)
+                return real_add_parser(name, *a, **k)
+            sub.add_parser = add_parser
+            return sub
+        with mock.patch.object(argparse.ArgumentParser, 'add_subparsers', spy):
+            with self.assertRaises(SystemExit):        # required=True: no subcommand given
+                lunaratlas.main([])
+        self.assertEqual(set(names), set(lunaratlas.COMMANDS))
+
     def test_a_double_click_opens_the_launcher_that_stops_by_itself(self):
         args, _ = self.run_main([])
         self.assertEqual(args, ['app', '--idle-exit', '180'])
@@ -157,6 +185,49 @@ class PackagedEntryPoint(S.TempDir):
             os.environ.pop('SSL_CERT_FILE', None)
             self.launcher().certificates()
             self.assertEqual(os.environ['SSL_CERT_FILE'], certifi.where())
+
+
+NOTICES = os.path.join(S.ROOT, 'packaging', 'notices.py')
+
+
+class PackagingNotices(S.TempDir):
+    """packaging/notices.py: third-party licence texts collected for a build, and the GPL-codec guard (C-12)."""
+
+    def notices(self):
+        spec = importlib.util.spec_from_file_location('lunaratlas_notices', NOTICES)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_collects_a_licence_for_every_wanted_distribution_that_is_installed(self):
+        n = self.notices()
+        out = os.path.join(self.tmp, 'THIRD-PARTY-NOTICES.txt')
+        n.collect(out)
+        with open(out, encoding='utf-8') as fh:
+            text = fh.read()
+        self.assertIn('Python', text)                    # always included, whether or not it is installed as a dist
+        for name in ('numpy', 'certifi'):                 # both are always installed for the test suite to run
+            try:
+                import importlib.metadata as im
+                version = im.distribution(name).version
+            except im.PackageNotFoundError:
+                continue
+            self.assertIn(f'{name} {version}', text)
+
+    def test_finds_forbidden_gpl_codec_libraries(self):
+        n = self.notices()
+        for name in ('libx264.164.dylib', 'x265.dll', 'libpostproc.so.58'):
+            open(os.path.join(self.tmp, name), 'w').close()
+        open(os.path.join(self.tmp, 'libavcodec.dylib'), 'w').close()      # not itself forbidden
+        hits = n.find_forbidden(self.tmp)
+        self.assertEqual(len(hits), 3)
+        with self.assertRaises(SystemExit):
+            n.check_forbidden(self.tmp)
+
+    def test_a_clean_folder_passes(self):
+        n = self.notices()
+        open(os.path.join(self.tmp, 'libavcodec.dylib'), 'w').close()
+        n.check_forbidden(self.tmp)                       # must not raise
 
 
 class Startup(S.TempDir):
@@ -206,7 +277,17 @@ class Startup(S.TempDir):
         with mock.patch.object(atlas_app.webbrowser, 'open') as wb:
             atlas_app.run(port=srv.server_port, log=logs.append)
         self.assertTrue(logs and logs[0].startswith('already running'), logs)
-        wb.assert_called_once_with(f'http://localhost:{srv.server_port}/app?t={srv.token}')
+        # the token no longer reaches the browser's own command line (claude-findings.md C-07): a private redirect
+        # file is opened instead, and only its content carries the real, token-bearing address
+        wb.assert_called_once()
+        handoff_url = wb.call_args[0][0]
+        self.assertTrue(handoff_url.startswith('file://'), handoff_url)
+        self.assertNotIn(srv.token, handoff_url, "the token must not be in the browser's argv")
+        with open(handoff_url[len('file://'):], encoding='utf-8') as fh:
+            page = fh.read()
+        self.assertIn(f'http://localhost:{srv.server_port}/app?t={srv.token}', page)
+        if os.name == 'posix':
+            self.assertEqual(oct(os.stat(handoff_url[len('file://'):]).st_mode)[-3:], '600', 'private: this user only')
 
     def test_the_browser_launcher_stops_when_no_page_is_left(self):
         app = atlas_app.App(self.tmp, S.quiet)
