@@ -24,7 +24,21 @@ function keyInfo(k) {
 }
 
 export class Browser {
-  static async launch(chrome, dir, { width = 1400, height = 900 } = {}) {
+  static async launch(chrome, dir, opts = {}) {
+    // a cold CI runner can lose these races the first time or two (seen on Edge/Linux under load, well clear of
+    // the budgets below once warm): the previous instance can still be exiting when the next launch clears its
+    // profile dir (ENOTEMPTY) or starts up (no DevToolsActivePort yet). One retry costs nothing on the common
+    // path and avoids a flaky suite.
+    for (let attempt = 1; ; attempt++) {
+      try { return await Browser._launchOnce(chrome, dir, opts); }
+      catch (e) {
+        if (attempt >= 3 || !(e.message === 'Chrome did not start' || e.code === 'ENOTEMPTY')) throw e;
+        await sleep(500);
+      }
+    }
+  }
+
+  static async _launchOnce(chrome, dir, { width = 1400, height = 900 } = {}) {
     const profile = join(dir, 'chrome-profile');
     rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     mkdirSync(profile, { recursive: true });
