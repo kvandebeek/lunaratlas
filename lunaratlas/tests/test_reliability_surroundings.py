@@ -35,6 +35,7 @@ import atlas_geo as ag
 import atlas_names as an
 import atlas_view as av
 import lunaratlas as ma
+from atlas_paths import cv_imwrite
 
 
 def readonly(path, mode=0o555):
@@ -205,7 +206,7 @@ class AwkwardNames(S.TempDir, unittest.TestCase):
             self.skipTest('this filesystem does not distinguish the two forms')
         for n in (nfc, nfd):
             p = os.path.join(self.tmp, n)
-            cv2.imwrite(p, np.zeros((20, 20), np.uint8))
+            cv_imwrite(p, np.zeros((20, 20), np.uint8))
             S.locate_as(p, S.truth_geometry())
         sides = [f for f in os.listdir(self.tmp) if f.endswith('.atlas.json')]
         self.assertGreaterEqual(len(sides), 1)

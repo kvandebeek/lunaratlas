@@ -152,7 +152,17 @@ def publish(tmp, path):
         os.chmod(tmp, 0o666 & ~_UMASK)
     except OSError:
         pass
-    os.replace(tmp, path)
+    # On Windows, os.replace can lose a race with a reader that has `path` open (ERROR_SHARING_VIOLATION,
+    # winerror 32), even though POSIX allows a rename over an open file unconditionally; the reader's handle
+    # is almost always released within milliseconds, so a short retry succeeds where a bare call would not.
+    for attempt in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except OSError as e:
+            if sys.platform != 'win32' or getattr(e, 'winerror', None) != 32 or attempt == 19:
+                raise
+            _time.sleep(0.05)
 
 
 # ---------------------------------------------------------------- Unicode-safe image I/O
