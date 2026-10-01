@@ -1,4 +1,6 @@
 """The close-up search, coarse to fine: the same places found as by the full search, in a third of the time or less."""
+import json
+import os
 import time
 import unittest
 from datetime import datetime, timezone
@@ -63,6 +65,54 @@ def rank(cands, geo_w, truth):
         if abs(float(la) - float(tla)) < 1 and abs(float(lo) - float(tlo)) < 1:
             return i + 1
     return 0
+
+
+class FakeGeo:
+    """Stands in for a search hit's geometry: verify() reads its matches and rms straight from it."""
+    km_per_px, north_angle, mirrored = 0.5, 0.0, False
+
+    def __init__(self, n, rms):
+        self.n, self.rms = n, rms
+
+    def to_latlon(self, x, y):
+        return 10.0, -20.0, True
+
+
+class Choice(S.TempDir):
+    """Which fit locate_closeup keeps, and what it does when the folder's optics find nothing (no Moon data needed)."""
+
+    def locate(self, hits_for, optics_file=None):
+        from unittest import mock
+        path = os.path.join(self.tmp, '2026-05-27-2010_5-Moon1__lapl3_ap1.tif')
+        if optics_file:
+            with open(os.path.join(self.tmp, ac.OPTICS_FILE), 'w') as fh:
+                json.dump(optics_file, fh)
+        lines = []
+        search = lambda gray, kms, *a: ([dict(km=kms[0], score=0.5, angle=0, mirror=False, hit=h) for h in hits_for(kms)], None)
+        with mock.patch.object(ac, 'load_gray', lambda p: (np.zeros((100, 200), np.float32),)), \
+             mock.patch.object(ac, 'Relief', lambda *a: None), mock.patch.object(ac, 'Reference', lambda *a: None), \
+             mock.patch.object(ac, 'blind_search', search), \
+             mock.patch.object(ac, 'solve_hit', lambda c, gw: FakeGeo(*c['hit'])), \
+             mock.patch.object(ac, 'verify', lambda gray, g, *a, **k: (g.n, g, g.rms)), \
+             mock.patch.object(ac, 'ask_optics', lambda folder, log: ac.load_optics(folder)):
+            geo, q = ac.locate_closeup(path, lambda *a: lines.append(' '.join(map(str, a))))
+        return geo, q, '\n'.join(lines)
+
+    def test_a_poor_fit_with_more_matches_does_not_hide_a_good_one(self):
+        geo, q, _ = self.locate(lambda kms: [(40, 20.0), (30, 1.0)])
+        self.assertEqual((q['matches'], q['rms_px']), (30, 1.0))
+
+    def test_nothing_that_fits_is_refused_with_the_reason(self):
+        with self.assertRaises(SystemExit) as e:
+            self.locate(lambda kms: [(40, 20.0), (5, 1.0)])
+        self.assertIn('40 terrain matches but 20.0 px rms', str(e.exception))
+
+    def test_a_frame_not_at_the_folders_scale_is_searched_at_every_setup(self):
+        folder_optics = dict(SETUP, text='the folder setup')
+        geo, q, log = self.locate(lambda kms: [(5, 1.0)] if len(kms) == 3 else [(200, 0.8)], folder_optics)
+        self.assertEqual(q['matches'], 200)
+        self.assertIn('trying every setup', log)
+        self.assertEqual(ac.load_optics(self.tmp), folder_optics, "the folder's optics file is left as it was")
 
 
 @S.slow

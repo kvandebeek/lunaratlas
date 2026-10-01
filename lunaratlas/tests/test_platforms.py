@@ -305,5 +305,53 @@ class Startup(S.TempDir):
         self.assertTrue(any('stopping' in l for l in logs), logs)
 
 
+class ExclusiveListeningSockets(unittest.TestCase):
+    """bugs-overview BUG-12: SO_REUSEADDR (inherited as allow_reuse_address=True) has weaker semantics on
+    Windows than on POSIX and can let a second process bind a port the first one is still actively listening
+    on. Windows verification pending -- a mocked fake socket proves the option ordering and POSIX's own
+    behaviour is unaffected, but the actual OS-level consequence has not been reproduced on this Mac."""
+
+    class FakeSocket:
+        def __init__(self):
+            self.calls = []
+
+        def setsockopt(self, *a):
+            self.calls.append(('setsockopt', a))
+
+        def bind(self, addr):
+            self.calls.append(('bind', addr))
+
+        def getsockname(self):
+            return ('127.0.0.1', 12345)
+
+    def server_bind(self, platform):
+        srv = atlas_view.Server.__new__(atlas_view.Server)
+        srv.socket = self.FakeSocket()
+        srv.server_address = ('127.0.0.1', 12345)
+        srv.allow_reuse_address = True            # as HTTPServer sets it
+        with mock.patch.object(sys, 'platform', platform), \
+                mock.patch.object(atlas_view.socket, 'SO_EXCLUSIVEADDRUSE', 99, create=True):
+            srv.server_bind()
+        return srv
+
+    def test_windows_sets_exclusive_before_bind_and_disables_reuse(self):
+        srv = self.server_bind('win32')
+        self.assertFalse(srv.allow_reuse_address, 'the stdlib must not also set SO_REUSEADDR')
+        names = [c[0] for c in srv.socket.calls]
+        self.assertEqual(names[0], 'setsockopt', 'the exclusive option is set before bind()')
+        self.assertIn('bind', names)
+        self.assertLess(names.index('setsockopt'), names.index('bind'))
+        opt_call = next(c for c in srv.socket.calls if c[0] == 'setsockopt')
+        self.assertEqual(opt_call[1], (atlas_view.socket.SOL_SOCKET, 99, 1))
+
+    def test_posix_is_unaffected(self):
+        srv = self.server_bind('darwin')
+        self.assertTrue(srv.allow_reuse_address, 'POSIX behaviour (SO_REUSEADDR) is unchanged')
+        # TCPServer.server_bind() itself sets SO_REUSEADDR here (allow_reuse_address stayed True); this
+        # override's own Windows-only branch did not run and did not add a second setsockopt call
+        opts = [c[1] for c in srv.socket.calls if c[0] == 'setsockopt']
+        self.assertEqual(opts, [(atlas_view.socket.SOL_SOCKET, atlas_view.socket.SO_REUSEADDR, 1)])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,4 +1,5 @@
 """The browser launcher (`lunaratlas.py app`): upload, capture time in the copy's name, locate, open, refusals."""
+import errno
 import http.client
 import json
 import os
@@ -31,6 +32,34 @@ class CopyName(unittest.TestCase):
         for bad in ('run.sh', 'moon', 'moon.tif.exe'):
             with self.subTest(bad), self.assertRaises(ValueError):
                 copy_name(bad, '')
+
+
+class NightSideForACloseupWithNoCaptureTime(S.TempDir):
+    """BUG-06: a close-up with no usable capture time made sun_elevation_light() return None; night_side() then
+    built a 0-D NumPy array from it and page_data() iterated it with zip(), raising instead of opening the page."""
+
+    def test_page_data_does_not_crash_and_shows_names_as_lit(self):
+        W, H = 1100, 1000                                  # the geometry S.truth_geometry() actually describes
+        img = os.path.join(self.tmp, 'crop.tif')            # no SharpCap stamp in the name: no capture time
+        cv2.imwrite(img, np.zeros((H, W), np.uint16))
+        geo = S.truth_geometry()
+        side = dict(quality=dict(closeup=True), width=W, height=H)   # no capture_utc either
+        data = av.page_data(img, lambda: np.zeros((H, W), np.uint16), geo, side,
+                            levels=[dict(w=W, h=H)], log=lambda *a: None)
+        self.assertGreater(len(data['features']), 0)
+        self.assertTrue(all(f.get('lit', 1.0) >= 1.0 for f in data['features']),
+                        'unknown lighting shows every name as lit, not hidden or dimmed')
+
+    def test_night_side_itself_returns_none_rather_than_a_malformed_array(self):
+        W, H = 1100, 1000
+        img = os.path.join(self.tmp, 'crop2.tif')
+        cv2.imwrite(img, np.zeros((H, W), np.uint16))
+        geo = S.truth_geometry()
+        feats = S.projected_features(geo)
+        side = dict(quality=dict(closeup=True))
+        xy = np.zeros((len(feats), 2))
+        light = av.night_side(img, lambda: np.zeros((H, W), np.uint16), geo, side, feats, xy, lambda *a: None)
+        self.assertIsNone(light)
 
 
 class RecentPhotos(S.TempDir):
@@ -106,6 +135,65 @@ class RecentPhotos(S.TempDir):
         self.assertTrue(os.path.isdir(keep), 'the currently open pyramid is never evicted')
         self.assertFalse(os.path.exists(orphan), 'a deleted source leaves no permanent pyramid')
         self.assertFalse(os.path.exists(old_thumb), 'the oldest cache entry is evicted over the cap')
+
+    def test_cache_size_counts_a_file_as_well_as_a_folder(self):
+        """BUG-15: cache_size() only walked, and os.walk() of a plain file yields nothing, so every launcher
+        thumbnail counted as zero bytes and the 2 GiB cap was never reached."""
+        f = os.path.join(self.tmp, 'thumb.jpg')
+        with open(f, 'wb') as fh: fh.write(b'x' * 1024)
+        d = os.path.join(self.tmp, 'pyramid'); os.makedirs(os.path.join(d, 'inner'))
+        with open(os.path.join(d, 'a'), 'wb') as fh: fh.write(b'y' * 10)
+        with open(os.path.join(d, 'inner', 'b'), 'wb') as fh: fh.write(b'z' * 5)
+        self.assertEqual(av.cache_size(f), 1024)
+        self.assertEqual(av.cache_size(d), 15)
+        self.assertEqual(av.cache_size(os.path.join(self.tmp, 'gone')), 0)
+
+    def test_thumbnails_alone_are_evicted_down_to_the_cap(self):
+        """A cache holding nothing but thumbnails used to measure zero and grow without limit."""
+        root = os.path.join(self.tmp, 'cache2')
+        tiles, thumbs = os.path.join(root, 'tiles'), os.path.join(root, 'thumbs')
+        os.makedirs(tiles); os.makedirs(thumbs)
+        names = []
+        for i, age in enumerate((1, 2, 3)):
+            t = os.path.join(thumbs, f'{i}.jpg')
+            with open(t, 'wb') as fh: fh.write(b'x' * 100)
+            os.utime(t, (age, age))
+            names.append(t)
+        with mock.patch.object(av, 'CACHE_ROOT', root), mock.patch.object(av, 'CACHE', tiles):
+            av.evict_cache(limit=150)
+        self.assertFalse(os.path.exists(names[0]), 'the oldest thumbnail goes first')
+        self.assertFalse(os.path.exists(names[1]))
+        self.assertTrue(os.path.exists(names[2]), 'eviction stops as soon as the cache is under the cap')
+
+    def test_mixed_cache_evicts_only_what_the_thumbnails_push_over(self):
+        """Tiles alone fit under the cap; tiles plus thumbnails do not. Only the oldest thumbnails go, the
+        retained entries account for the remaining bytes, and a second pass removes nothing more."""
+        root = os.path.join(self.tmp, 'cache3')
+        tiles, thumbs = os.path.join(root, 'tiles'), os.path.join(root, 'thumbs')
+        os.makedirs(tiles); os.makedirs(thumbs)
+        alive = os.path.join(self.tmp, 'alive2.png')
+        cv2.imwrite(alive, np.zeros((10, 10), np.uint8))
+        pyramid = os.path.join(tiles, 'live'); os.makedirs(pyramid)
+        with open(os.path.join(pyramid, 'meta.json'), 'w') as fh:
+            json.dump(dict(image=alive, signature=av.image_signature(alive)), fh)
+        with open(os.path.join(pyramid, 'payload'), 'wb') as fh: fh.write(b'p' * 200)
+        tile_bytes = av.cache_size(pyramid)
+        kept = []
+        for i, age in enumerate((10, 20, 30)):
+            t = os.path.join(thumbs, f'{i}.jpg')
+            with open(t, 'wb') as fh: fh.write(b'x' * 100)
+            os.utime(t, (age, age))
+            kept.append(t)
+        limit = tile_bytes + 100
+        with mock.patch.object(av, 'CACHE_ROOT', root), mock.patch.object(av, 'CACHE', tiles):
+            av.evict_cache(limit=limit)
+            self.assertTrue(os.path.isdir(pyramid), 'a live pyramid under the cap is not touched')
+            self.assertEqual([os.path.exists(t) for t in kept], [False, False, True])
+            remaining = av.cache_size(pyramid) + sum(av.cache_size(t) for t in kept if os.path.exists(t))
+            self.assertEqual(remaining, limit)
+            av.evict_cache(limit=limit)
+            self.assertTrue(os.path.isdir(pyramid))
+            self.assertTrue(os.path.exists(kept[2]), 'already under the cap: a second pass evicts nothing')
 
 
 def big_endian_tiff(original, offset):
@@ -283,6 +371,114 @@ class SamePhotoAgain(S.TempDir):
         self.upload(a)
         self.upload(self.uncompressed(2))
         self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, 'work'))), ['moon (2).tif', 'moon.tif'])
+
+    def test_two_different_photos_racing_for_one_name_both_survive(self):
+        """BUG-03: the no-hard-links fallback checked that the name was free and then renamed over it, so two
+        uploads could pass the check together and the later one destroyed the earlier photo. Both uploads are
+        released from a barrier, so the race is real and not a timing sleep."""
+        a, b = self.uncompressed(1), self.uncompressed(2)
+        self.assertEqual(len(a), len(b), 'equal length, so neither wins on size')
+        gate = threading.Barrier(2, timeout=30)
+        out = {}
+        def send(key, payload):
+            gate.wait()
+            out[key] = self.upload(payload)
+        threads = [threading.Thread(target=send, args=kv) for kv in (('a', a), ('b', b))]
+        for t in threads: t.start()
+        for t in threads: t.join(60)
+        self.assertEqual(set(out), {'a', 'b'}, 'both uploads answered')
+        paths = {k: v[0]['path'] for k, v in out.items()}
+        self.assertNotEqual(paths['a'], paths['b'], 'each payload got a name of its own')
+        for key, payload in (('a', a), ('b', b)):
+            with open(paths[key], 'rb') as fh:
+                self.assertEqual(fh.read(), payload, f'{key} was not overwritten by the other upload')
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, 'work'))), ['moon (2).tif', 'moon.tif'])
+
+    def test_a_folder_without_hard_links_fails_the_upload_instead_of_replacing(self):
+        """The bounded safe default: no atomic claim is available, so the upload fails cleanly. Nothing already
+        in the work folder is touched and no temporary file is left behind."""
+        first, _ = self.upload(self.uncompressed(1))
+        with open(sidecar_path(first['path']), 'w') as fh:
+            fh.write('{"the": "first photo\'s positioning"}')
+        before = open(first['path'], 'rb').read()
+        def no_links(src, dst, **kw):
+            raise OSError(errno.EOPNOTSUPP, os.strerror(errno.EOPNOTSUPP))
+        with mock.patch.object(os, 'link', no_links):
+            c = http.client.HTTPConnection('127.0.0.1', self.srv.server_port, timeout=30)
+            c.request('POST', '/app/upload?name=moon.tif&time=', self.uncompressed(2),
+                      {'Host': 'localhost', 'X-LA-Token': self.srv.token})
+            r = c.getresponse()
+            body = json.loads(r.read())
+            c.close()
+        self.assertEqual(r.status, 500)
+        self.assertIn('hard link', body['error'])
+        with open(first['path'], 'rb') as fh:
+            self.assertEqual(fh.read(), before, 'the photo already there is untouched')
+        self.assertEqual(open(sidecar_path(first['path'])).read(), '{"the": "first photo\'s positioning"}')
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, 'work'))), ['moon.tif', 'moon.tif.atlas.json'],
+                         'the photo and its sidecar only: no temporary file and no second copy')
+
+    def test_racing_uploads_without_hard_links_lose_no_photo(self):
+        """The actual BUG-03 sequence: no hard links, so the old code checked that `moon.tif` was free and then
+        renamed onto it. Both uploads passed the check and the loser's pixels were destroyed. Now neither claims
+        the name, both are told so, and no half-published image appears in the work folder."""
+        a, b = self.uncompressed(1), self.uncompressed(2)
+        gate = threading.Barrier(2, timeout=30)
+        out = {}
+        def no_links(src, dst, **kw):
+            raise OSError(errno.EOPNOTSUPP, os.strerror(errno.EOPNOTSUPP))
+        def send(key, payload):
+            gate.wait()
+            c = http.client.HTTPConnection('127.0.0.1', self.srv.server_port, timeout=30)
+            c.request('POST', '/app/upload?name=moon.tif&time=', payload,
+                      {'Host': 'localhost', 'X-LA-Token': self.srv.token})
+            r = c.getresponse()
+            out[key] = (r.status, json.loads(r.read()))
+            c.close()
+        with mock.patch.object(os, 'link', no_links):
+            threads = [threading.Thread(target=send, args=kv) for kv in (('a', a), ('b', b))]
+            for t in threads: t.start()
+            for t in threads: t.join(60)
+        self.assertEqual(set(out), {'a', 'b'})
+        for key, (status, body) in out.items():
+            self.assertEqual(status, 500, f'{key} was not quietly published over the other')
+            self.assertIn('hard link', body['error'])
+        self.assertEqual(os.listdir(os.path.join(self.tmp, 'work')), [],
+                         'no photo, no partial copy and no temporary file')
+
+    def test_a_permission_error_is_reported_as_itself_and_cleans_up(self):
+        def denied(src, dst, **kw):
+            raise PermissionError(errno.EACCES, 'Permission denied')
+        with mock.patch.object(os, 'link', denied):
+            c = http.client.HTTPConnection('127.0.0.1', self.srv.server_port, timeout=30)
+            c.request('POST', '/app/upload?name=moon.tif&time=', self.uncompressed(1),
+                      {'Host': 'localhost', 'X-LA-Token': self.srv.token})
+            r = c.getresponse()
+            body = json.loads(r.read())
+            c.close()
+        self.assertEqual(r.status, 500)
+        self.assertIn('Permission denied', body['error'])
+        self.assertNotIn('hard link', body['error'], 'not reported as an unsupported filesystem')
+        self.assertEqual(os.listdir(os.path.join(self.tmp, 'work')), [], 'no partial image, no temporary file')
+
+    def test_a_name_taken_by_a_symlink_out_of_the_folder_is_refused_not_followed(self):
+        """A symlink planted in the work folder is never written through, by the hard-link claim or anything
+        else: the upload is refused and the file it points at keeps its bytes."""
+        work = os.path.join(self.tmp, 'work')
+        os.makedirs(work, exist_ok=True)
+        outside = os.path.join(self.tmp, 'outside.tif')
+        with open(outside, 'wb') as fh: fh.write(b'not a photo')
+        os.symlink(outside, os.path.join(work, 'moon.tif'))
+        c = http.client.HTTPConnection('127.0.0.1', self.srv.server_port, timeout=30)
+        c.request('POST', '/app/upload?name=moon.tif&time=', self.uncompressed(1),
+                  {'Host': 'localhost', 'X-LA-Token': self.srv.token})
+        r = c.getresponse()
+        body = json.loads(r.read())
+        c.close()
+        self.assertEqual(r.status, 400)
+        self.assertNotIn('path', body)
+        with open(outside, 'rb') as fh:
+            self.assertEqual(fh.read(), b'not a photo', 'the file the symlink pointed at is untouched')
 
 
 @unittest.skipUnless(S.HAVE_REFERENCE, 'needs the reference data in lunaratlas/data')

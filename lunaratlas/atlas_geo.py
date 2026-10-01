@@ -6,9 +6,11 @@ point (lat0, lon0) -> 2x2 affine + offset into image pixels -> smooth polynomial
 WAC 643 nm normalized-albedo map rendered in the same geometry.
 """
 import hashlib
+import http.client
 import json
 import math
 import os
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -18,10 +20,19 @@ import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from atlas_paths import DATA, publish, temp_beside  # noqa: E402  (lunaratlas/data, or the app's data folder)
+from atlas_paths import DATA, file_lock, publish, temp_beside  # noqa: E402  (lunaratlas/data, or the app's data folder)
 R_MOON = 1737.4           # km
 DIST = 221.0              # Earth-Moon distance in lunar radii (perspective; 205-234 over the orbit)
 PPD = 64                  # reference map pixels per degree
+class NoUsableLimb(Exception):
+    """No usable sunlit limb in the image, or too little terrain evidence to trust a full-disk fit: the three
+    recoverable conditions geometry() falls back from to a close-up search (bugs-overview BUG-02). Deliberately
+    NOT a SystemExit: a SystemExit from inside locate() (a failed download building the reference map, a disk
+    full writing a sidecar, an unreadable image) must still terminate the command normally instead of being
+    mistaken for "no limb -- try a close-up", which used to download the LOLA model and search blind before
+    failing again for an unrelated reason."""
+
+
 SIDECAR_SCHEMA = 'lunaratlas.geo/1'
 OLD_SCHEMAS = ('moon_atlas.geo/1',)       # the same format, written before the rename; still read
 REF_TILES = {'E300N3150': (0, 0), 'E300N0450': (0, 90), 'E300S3150': (60, 0), 'E300S0450': (60, 90)}
@@ -231,22 +242,34 @@ def download(url, dest, valid, timeout=60, log=None, sha256=None, max_bytes=None
     With log, a line 'downloaded A of B MB' about every second (the app's progress bar reads it)."""
     tmp = temp_beside(dest, '.part')
     try:
-        with https_open(url, timeout) as r, open(tmp, 'wb') as fh:
-            hdr = getattr(r, 'headers', None)
-            total, got, shown = int((hdr.get('Content-Length') if hdr else 0) or 0), 0, 0.0
-            if max_bytes and total > max_bytes:
-                raise SystemExit(f'download of {url} is larger than expected ({total / 1e6:.0f} MB); not taken')
-            while True:
-                chunk = r.read(1 << 20)
-                if not chunk:
-                    break
-                fh.write(chunk)
-                got += len(chunk)
-                if max_bytes and got > max_bytes:
-                    raise SystemExit(f'download of {url} is larger than expected; not taken')
-                if log and total and (time.monotonic() - shown > 1 or got == total):
-                    shown = time.monotonic()
-                    log(f'  downloaded {got / 1e6:.1f} of {total / 1e6:.1f} MB')
+        try:
+            with https_open(url, timeout) as r, open(tmp, 'wb') as fh:
+                hdr = getattr(r, 'headers', None)
+                total, got, shown = int((hdr.get('Content-Length') if hdr else 0) or 0), 0, 0.0
+                if max_bytes and total > max_bytes:
+                    raise SystemExit(f'download of {url} is larger than expected ({total / 1e6:.0f} MB); not taken')
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    got += len(chunk)
+                    if max_bytes and got > max_bytes:
+                        raise SystemExit(f'download of {url} is larger than expected; not taken')
+                    if log and total and (time.monotonic() - shown > 1 or got == total):
+                        shown = time.monotonic()
+                        log(f'  downloaded {got / 1e6:.1f} of {total / 1e6:.1f} MB')
+        except (urllib.error.URLError, OSError, socket.timeout, http.client.HTTPException) as e:
+            # a connection reset, a timed-out read, a DNS failure, or anything else urlopen()/the socket can raise
+            # mid-transfer used to escape as a raw exception instead of the clear SystemExit every other download
+            # failure here already becomes (bugs-overview BUG-08); SystemExit itself (the two raises just above)
+            # passes straight through this handler unchanged, since it is not an OSError. https_check()'s own
+            # refusal (a disallowed scheme or host, raised before any network attempt) is also a URLError, but
+            # is a configuration/security refusal, not a transient network failure, so it keeps its own message
+            # and type instead of being folded into this generic one -- its text always starts with "refusing "
+            if isinstance(e, urllib.error.URLError) and isinstance(e.reason, str) and e.reason.startswith('refusing '):
+                raise
+            raise SystemExit(f'could not download {url} ({e}); check the network and try again') from None
         if sha256 and sha256_file(tmp) != sha256:
             raise SystemExit(f'download of {url} is not the file this version expects (checksum differs); not taken')
         if not valid(tmp):
@@ -375,21 +398,21 @@ def fit_limb(gray, tol=1.5):
     g = cv2.GaussianBlur(gray, (0, 0), 1.5)
     lo, top = np.percentile(g, [2, 99.5])
     if not top > lo + 1e-3 * max(abs(top), 1.0):
-        raise SystemExit('no Moon found in the image (it has no contrast)')
+        raise NoUsableLimb('no Moon found in the image (it has no contrast)')
     # sunlit level from the pixels well above the sky, not from a fixed share of the frame:
     # a thin crescent in faint sky would otherwise take its "bright" level from the sky
     hi = np.percentile(g[g > lo + 0.5 * (top - lo)], 20)
     m = (g > lo + 0.4 * (hi - lo)).astype(np.uint8)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(m)
     if n < 2:
-        raise SystemExit('no Moon found in the image')
+        raise NoUsableLimb('no Moon found in the image')
     m = (lab == 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])).astype(np.uint8)
     cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     pts = max(cnts, key=len)[:, 0, :].astype(np.float64)
     h, w = gray.shape
     pts = pts[(pts[:, 0] > 2) & (pts[:, 0] < w - 3) & (pts[:, 1] > 2) & (pts[:, 1] < h - 3)]
     if len(pts) < 20:
-        raise SystemExit('could not find the limb (is the whole Moon, or a large part of its edge, in the image?)')
+        raise NoUsableLimb('could not find the limb (is the whole Moon, or a large part of its edge, in the image?)')
     rng = np.random.default_rng(1)
     cx, cy, R = _circle3(pts[rng.integers(0, len(pts), (3000, 3))])
     good = np.isfinite(R) & (R > 0.03 * max(h, w)) & (R < 1.5 * max(h, w))      # a small Moon in a wide frame too
@@ -403,7 +426,7 @@ def fit_limb(gray, tol=1.5):
         if score[i] > bs:
             bs, best = score[i], (cx[sl][i], cy[sl][i], R[sl][i])
     if best is None:
-        raise SystemExit('could not find the limb (is the whole Moon, or a large part of its edge, in the image?)')
+        raise NoUsableLimb('could not find the limb (is the whole Moon, or a large part of its edge, in the image?)')
     cx, cy, R = best
     for _ in range(5):
         d = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy) - R
@@ -502,6 +525,11 @@ def usable_centres(img, ok, geo, patch, search, step, target=300):
     lit = sm > lo + 0.1 * (hi - lo)
 
     def grid(st):
+        if h - half - S <= half + S or w - half - S <= half + S:
+            # the candidate geometry put too little of the frame inside the margin a patch needs (e.g. a limb
+            # fit gone wrong on a shallow, near-grazing arc: a huge, off-frame circle fitted to noise) — no
+            # centres rather than a crash; the caller already treats "not enough points" as "this pose is bad"
+            return (np.empty(0, int),) * 3
         ys, xs = np.mgrid[half + S:h - half - S:st, half + S:w - half - S:st]
         ys, xs = ys.ravel(), xs.ravel()
         sx, sy = geo.to_sky(xs.astype(float), ys.astype(float))
@@ -667,6 +695,11 @@ def locate(path, log=print, when=None):
     (c1x, c1y), R1 = ((cx + 0.5) * s1x - 0.5, (cy + 0.5) * s1y - 0.5), R * math.sqrt(s1x * s1y)
     yy, xx = np.mgrid[0:g1.shape[0], 0:g1.shape[1]]
     disk = np.hypot(xx - c1x, yy - c1y) < 0.9 * R1
+    if disk.sum() < 100:
+        # a limb fit thrown off by the image (a near-grazing arc, or content distorted enough to confuse the edge
+        # detector) can land a circle that barely or doesn't overlap the frame; coarse_pose's percentile over an
+        # empty/near-empty mask would crash rather than simply fail this pose
+        raise NoUsableLimb('limb fit unreliable: the fitted circle does not overlap enough of the image')
 
     native = 2 * R0
     diams = [d for d in (1024, 2048) if d < 0.8 * native] + [min(4096, native)]
@@ -729,7 +762,7 @@ def locate(path, log=print, when=None):
         # full-resolution terrain is mostly terminator shadow, which the albedo reference does not show
         if n < 12 or (best and n < 0.5 * best[0]):
             if best is None:
-                raise SystemExit(f'too few terrain matches ({n}) — is this a lunar image with enough of the disk?')
+                raise NoUsableLimb(f'too few terrain matches ({n}) — is this a lunar image with enough of the disk?')
             log(f'  disk {diam:.0f} px: only {n} matches; keeping the {best[1]:.0f} px result')
             break
         geo = gfit.resized(1 / sx, 1 / sy)
@@ -779,8 +812,59 @@ def north_up(raw, geo):
 
 
 # ---------------------------------------------------------------- sidecar
+#
+# The canonical sidecar name keeps the image's own extension ("moon.tif.atlas.json"), so "moon.tif" and "moon.jpg"
+# never collide (bugs-overview BUG-05: both used to map to the same "moon.atlas.json", and locating one silently
+# replaced the other's geometry and edits). A legacy sidecar ("moon.atlas.json", from before this change) is still
+# read, but only when it was actually written for the image being asked about: its recorded basename and image
+# signature (size + mtime) must both match. That guards against two images of the same stem (or a stale legacy file
+# left over from a deleted image) donating one's edits to the other. A legacy file that does not validate is treated
+# as absent, never as damaged -- it may genuinely belong to a different file next to this one.
 def sidecar_path(image):
+    """The canonical sidecar for image, including its extension so same-stem images never collide."""
+    return image + '.atlas.json'
+
+
+def _legacy_sidecar_path(image):
     return os.path.splitext(image)[0] + '.atlas.json'
+
+
+def _read_sidecar_dict(path):
+    """The sidecar's JSON object, or (None, problem) if it cannot be read as one. Never raises."""
+    try:
+        with open(path) as fh:
+            d = json.load(fh)
+    except OSError:
+        return None, None                                    # simply absent: not a problem worth reporting
+    except ValueError as e:
+        return None, dict(problem=f'{os.path.basename(path)} is damaged ({e.__class__.__name__})')
+    if not isinstance(d, dict):
+        return None, dict(problem=f'{os.path.basename(path)} is damaged (not a JSON object)')
+    return d, None
+
+
+def resolve_sidecar(image):
+    """(path, dict) of the sidecar that actually belongs to image, or (canonical_path, None) if there is none yet.
+    Prefers the canonical per-extension path; falls back to the legacy shared-stem path only when its recorded
+    image basename and signature both match -- never to paper over a damaged or missing canonical file, and never
+    for an ambiguous legacy file whose ownership cannot be confirmed."""
+    canonical = sidecar_path(image)
+    d, problem = _read_sidecar_dict(canonical)
+    if d is not None or problem is not None:
+        return canonical, (d if d is not None else dict(problem=problem['problem']))
+    legacy = _legacy_sidecar_path(image)
+    if legacy == canonical:                                   # image already has no extension: nothing to fall back to
+        return canonical, None
+    d, problem = _read_sidecar_dict(legacy)
+    if d is None:
+        return canonical, None
+    try:
+        sig = image_signature(image)
+    except OSError:
+        return canonical, None
+    if d.get('image') != os.path.basename(image) or d.get('image_signature') != sig:
+        return canonical, None                                # an ambiguous/foreign legacy file: never adopted
+    return legacy, d
 
 
 def image_signature(image):
@@ -789,23 +873,24 @@ def image_signature(image):
 
 
 def save_geo(image, geo, quality, width, height, **extra):
+    """Always written to the canonical per-extension sidecar. A validated legacy sidecar for this same image is
+    left in place (so an older tool pointed at it still sees the previous geometry) but is no longer read once the
+    canonical file exists, which load_geo()/resolve_sidecar() prefer. Held under the same cross-process file lock
+    as the viewer's edit writes (bugs-overview BUG-04/BUG-14), so a relocate from one process and an edit save from
+    another can never interleave their read-modify-write of the one sidecar."""
     p = sidecar_path(image)
-    d = {}
-    if os.path.exists(p):              # keep whatever else was stored next to the geometry
-        try:
-            with open(p) as fh:
-                d = json.load(fh)
-        except (OSError, ValueError):
-            d = {}
-        if not isinstance(d, dict):
-            d = {}
-    d.update(schema=SIDECAR_SCHEMA, image=os.path.basename(image), image_signature=image_signature(image),
-             width=width, height=height, geometry=geo.as_dict(), quality=quality,
-             derived=dict(radius_px=round(geo.radius_px, 1), km_per_px=round(geo.km_per_px, 4),
-                          north_angle_deg=round(geo.north_angle, 2), mirrored=bool(geo.mirrored),
-                          libration_lat=round(geo.lat0, 3), libration_lon=round(geo.lon0, 3)),
-             located=time.strftime('%Y-%m-%d %H:%M:%S'), **extra)
-    write_json_atomic(p, d, indent=1)
+    with file_lock(p):
+        d = {}
+        src, existing = resolve_sidecar(image)
+        if existing is not None and 'problem' not in existing:    # keep whatever else was stored next to the
+            d = dict(existing)                                    # geometry, from the canonical or a validated legacy file
+        d.update(schema=SIDECAR_SCHEMA, image=os.path.basename(image), image_signature=image_signature(image),
+                 width=width, height=height, geometry=geo.as_dict(), quality=quality,
+                 derived=dict(radius_px=round(geo.radius_px, 1), km_per_px=round(geo.km_per_px, 4),
+                              north_angle_deg=round(geo.north_angle, 2), mirrored=bool(geo.mirrored),
+                              libration_lat=round(geo.lat0, 3), libration_lon=round(geo.lon0, 3)),
+                 located=time.strftime('%Y-%m-%d %H:%M:%S'), **extra)
+        write_json_atomic(p, d, indent=1)
     return p
 
 
@@ -819,16 +904,11 @@ def write_json_atomic(path, data, **kw):
 def load_geo(image):
     """(Geometry, sidecar dict). The geometry is None when the sidecar is missing, damaged, of an unknown
     schema or made for a different version of the image; the dict's 'problem' then says which."""
-    p = sidecar_path(image)
-    if not os.path.exists(p):
+    p, d = resolve_sidecar(image)
+    if d is None:
         return None, None
-    try:
-        with open(p) as fh:
-            d = json.load(fh)
-    except (OSError, ValueError) as e:
-        return None, dict(problem=f'{os.path.basename(p)} is damaged ({e.__class__.__name__})')
-    if not isinstance(d, dict):
-        return None, dict(problem=f'{os.path.basename(p)} is damaged (not a JSON object)')
+    if 'problem' in d and set(d) == {'problem'}:
+        return None, d
     if d.get('schema') != SIDECAR_SCHEMA and d.get('schema') not in OLD_SCHEMAS:
         return None, dict(d, problem=f"{os.path.basename(p)} has unsupported schema {d.get('schema')!r}")
     try:

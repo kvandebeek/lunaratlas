@@ -2,6 +2,7 @@
 import json
 import math
 import os
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -238,7 +239,7 @@ class Sidecar(S.TempDir, unittest.TestCase):
         S.cv2.imwrite(p, np.zeros((10, 10), np.uint8))
         g = S.truth_geometry()
         path = ag.save_geo(p, g, dict(matches=1), 10, 10, extra_field='kept')
-        self.assertEqual(path, os.path.join(self.tmp, 'a.atlas.json'))
+        self.assertEqual(path, os.path.join(self.tmp, 'a.tif.atlas.json'))
         g2, d = ag.load_geo(p)
         self.assertEqual(g2.as_dict(), g.as_dict())
         self.assertEqual(d['schema'], ag.SIDECAR_SCHEMA)
@@ -272,6 +273,70 @@ class Sidecar(S.TempDir, unittest.TestCase):
 
     def test_missing(self):
         self.assertEqual(ag.load_geo(os.path.join(self.tmp, 'none.tif')), (None, None))
+
+    def test_same_stem_images_do_not_share_a_sidecar(self):
+        """BUG-05: moon.tif and moon.jpg used to both map to moon.atlas.json, so locating one silently replaced
+        the other's geometry. Each extension now gets its own sidecar."""
+        tif, jpg = os.path.join(self.tmp, 'moon.tif'), os.path.join(self.tmp, 'moon.jpg')
+        S.cv2.imwrite(tif, np.zeros((10, 12), np.uint8))
+        S.cv2.imwrite(jpg, np.zeros((20, 24), np.uint8))
+        g_tif, g_jpg = S.truth_geometry(W=10, H=12), S.truth_geometry(W=20, H=24)
+        ag.save_geo(tif, g_tif, {}, 10, 12)
+        ag.save_geo(jpg, g_jpg, {}, 20, 24)
+        self.assertNotEqual(ag.sidecar_path(tif), ag.sidecar_path(jpg))
+        d_tif, d_jpg = S.sidecar(tif), S.sidecar(jpg)
+        self.assertEqual((d_tif['width'], d_tif['height']), (10, 12))
+        self.assertEqual((d_jpg['width'], d_jpg['height']), (20, 24))
+        # relocating one must not disturb the other
+        ag.save_geo(tif, S.truth_geometry(W=10, H=12), {}, 10, 12, extra_field='second pass')
+        self.assertEqual(S.sidecar(jpg)['width'], 20, "the .jpg sidecar is untouched by the .tif's relocate")
+
+    def test_a_validated_legacy_sidecar_still_loads_and_is_not_adopted_by_a_different_file(self):
+        """A pre-rename sidecar (moon.atlas.json, shared by stem) still loads for the image it actually describes,
+        but never donates its geometry to an unrelated same-stem image."""
+        tif = os.path.join(self.tmp, 'moon.tif')
+        S.cv2.imwrite(tif, np.zeros((10, 12), np.uint8))
+        g = S.truth_geometry(W=10, H=12)
+        legacy = os.path.join(self.tmp, 'moon.atlas.json')
+        d = dict(schema=ag.SIDECAR_SCHEMA, image='moon.tif', image_signature=ag.image_signature(tif),
+                 width=10, height=12, geometry=g.as_dict())
+        with open(legacy, 'w') as fh:
+            json.dump(d, fh)
+        g2, loaded = ag.load_geo(tif)
+        self.assertIsNotNone(g2, 'a validated legacy sidecar is still read')
+        self.assertEqual(g2.as_dict(), g.as_dict())
+        # a same-stem sibling of a different kind must not inherit the legacy file just because it shares a stem
+        jpg = os.path.join(self.tmp, 'moon.jpg')
+        S.cv2.imwrite(jpg, np.zeros((20, 24), np.uint8))
+        self.assertEqual(ag.load_geo(jpg), (None, None), 'the legacy sidecar does not describe this file')
+
+    def test_edits_do_not_cross_over_between_same_stem_images(self):
+        """The sharpest form of BUG-05: before the per-extension sidecar, read_edits()/write_edits() did no
+        signature check at all, so one image's drawings, hidden names and capture time were shown and exported
+        on an unrelated same-stem image. Each extension's edits are independent now."""
+        import atlas_view as av
+        tif, jpg = os.path.join(self.tmp, 'moon.tif'), os.path.join(self.tmp, 'moon.jpg')
+        S.cv2.imwrite(tif, np.zeros((10, 12), np.uint8))
+        S.cv2.imwrite(jpg, np.zeros((20, 24), np.uint8))
+        ag.save_geo(tif, S.truth_geometry(W=10, H=12), {}, 10, 12)
+        ag.save_geo(jpg, S.truth_geometry(W=20, H=24), {}, 20, 24)
+        lock = threading.Lock()
+        av.write_edits(tif, dict(hidden=['Tycho']), lock)
+        self.assertEqual(av.read_edits(jpg).get('hidden', []), [], "the .jpg must not see the .tif's edits")
+        self.assertEqual(av.read_edits(tif)['hidden'], ['Tycho'])
+
+    def test_legacy_sidecar_is_migrated_to_canonical_on_the_next_write(self):
+        tif = os.path.join(self.tmp, 'moon.tif')
+        S.cv2.imwrite(tif, np.zeros((10, 12), np.uint8))
+        legacy = os.path.join(self.tmp, 'moon.atlas.json')
+        d = dict(schema=ag.SIDECAR_SCHEMA, image='moon.tif', image_signature=ag.image_signature(tif),
+                 width=10, height=12, geometry=S.truth_geometry(W=10, H=12).as_dict(), note='from before the rename')
+        with open(legacy, 'w') as fh:
+            json.dump(d, fh)
+        ag.save_geo(tif, S.truth_geometry(W=10, H=12), {}, 10, 12)
+        self.assertTrue(os.path.exists(ag.sidecar_path(tif)), 'the canonical sidecar now exists')
+        self.assertTrue(os.path.exists(legacy), 'the legacy file is left in place, not deleted')
+        self.assertEqual(S.sidecar(tif)['note'], 'from before the rename', 'its other fields carried over')
 
     def test_write_json_atomic(self):
         p = os.path.join(self.tmp, 'x.json')
@@ -372,8 +437,16 @@ class CloseupOptics(S.TempDir, unittest.TestCase):
         self.assertEqual(ac.drizzle_factor('x_Drizzle30.tif'), 3.0)
         self.assertEqual(ac.drizzle_factor('plain.tif'), 1.0)
 
-    def test_setups_cover_every_extender_and_camera(self):
-        self.assertEqual(len(ac.setups()), len(ac.EXTENDERS) * len(ac.CAMERAS))
+    def test_setups_cover_every_extender_camera_and_binning(self):
+        self.assertEqual(len(ac.setups()), len(ac.EXTENDERS) * len(ac.CAMERAS) * len(ac.BINNINGS))
+        binned = [s for s in ac.setups() if s['binning']]
+        self.assertTrue(binned)
+        s = binned[0]
+        plain = next(o for o in ac.setups() if not o['binning'] and o['camera'] == s['camera']
+                     and o['extender'] == s['extender'])
+        self.assertAlmostEqual(ac.arcsec_per_px(s), 2 * ac.arcsec_per_px(plain), places=12)
+        self.assertIn('2×2 binned', ac.optics_text(s))
+        self.assertNotIn('binned', ac.optics_text(plain))
 
     def test_plate_scale(self):
         s = dict(pixel_um=2.9, magnification=2.0)
@@ -386,7 +459,23 @@ class CloseupOptics(S.TempDir, unittest.TestCase):
         self.assertEqual(len(c), 3)                              # nominal ± 10 %
         base = ac.arcsec_per_px(known, 1.5) * 384400 * ac.KM_PER_ARCSEC_PER_KM
         self.assertAlmostEqual(c[1][0], base, places=9)
-        self.assertEqual(len(ac.km_candidates('a.tif', None, 384400)), len(ac.setups()))
+
+    def test_unknown_optics_leave_no_gap_the_search_would_miss(self):
+        kms = [km for km, _ in ac.km_candidates('a.tif', None, 384400)]
+        self.assertEqual(kms, sorted(kms))
+        steps = [b / a for a, b in zip(kms, kms[1:])]
+        self.assertLessEqual(max(steps), ac.MAX_SCALE_STEP + 1e-9)
+        self.assertGreater(min(steps), 1.04, 'near-equal scales are searched once')
+        for s in ac.setups():                    # every setup is within 5 % of a searched scale
+            km = ac.arcsec_per_px(s) * 384400 * ac.KM_PER_ARCSEC_PER_KM
+            self.assertLess(min(abs(math.log(k / km)) for k in kms), math.log(1.05) + 1e-9)
+
+    def test_every_scale_keeps_its_best_place(self):
+        # a small view's chance peak must not crowd out another scale's (lower scoring) true place
+        noise = [dict(km=0.22, score=0.13 - i * 0.001, mirror=False, tl=(100 * i, 0)) for i in range(12)]
+        true = dict(km=0.5, score=0.08, mirror=False, tl=(5, 5))
+        out = ac.per_scale(noise + [true], [0.22, 0.5], 12, 20, 2)
+        self.assertEqual(out[:2], [noise[0], true], "each scale's best comes before any scale's second best")
 
     def test_optics_file(self):
         self.assertIsNone(ac.load_optics(self.tmp))

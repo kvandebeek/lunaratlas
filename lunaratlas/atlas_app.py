@@ -11,6 +11,7 @@ The page shows in an app window of its own when pywebview is there (WebKit on ma
 the window stops everything. Otherwise it opens in the browser, and the launcher stops by itself a few minutes after
 the last page was closed (the pages ping it), so nothing is left running unseen.
 """
+import errno
 import hashlib
 import hmac
 import json
@@ -29,10 +30,9 @@ import numpy as np
 
 from atlas_ephem import SHARPCAP
 from atlas_geo import load_geo, sha256_file, sidecar_path
-from atlas_paths import CACHE, _UMASK, private_dir, publish, self_command, temp_beside, user_dir
+from atlas_paths import CACHE, IMAGE_EXT, _UMASK, is_export_name, private_dir, publish, self_command, temp_beside, user_dir
 from atlas_view import PAGE, ExportJob, Server, Session, handoff_url, reveal, run_server, start_server
 
-IMAGE_EXT = ('.tif', '.tiff', '.png', '.jpg', '.jpeg')
 PING = b'lunaratlas'
 THUMBNAIL_SLOTS = threading.BoundedSemaphore(2)    # TIFF/PNG decode is full-frame; do not run six at once
 MAX_UPLOAD = 4 << 30                           # one photo: mosaics of hundreds of MB are real, 4 GB is not a photo
@@ -57,6 +57,12 @@ def copy_name(name, when):
         t = datetime.strptime(when, '%Y-%m-%dT%H:%M')
         stem = f'{t:%Y-%m-%d-%H%M}_0-{stem}'
     return stem + ext.lower()
+
+
+# os.link() errno values that mean "this filesystem has no hard links" rather than "you may not": the
+# upload cannot claim a name atomically here, so it fails instead of risking another upload's photo.
+NO_HARD_LINKS = frozenset(n for n in (getattr(errno, a, None) for a in
+                          ('EOPNOTSUPP', 'ENOTSUP', 'ENOSYS', 'EPERM', 'EXDEV', 'EMLINK')) if n is not None)
 
 
 class App:
@@ -195,7 +201,11 @@ class App:
 
         The name is claimed with a hard link, which fails if it is taken (even by another upload finishing this
         instant): two uploads racing for the same free name can no longer both "win" and have the later rename
-        silently replace the earlier photo (claude-findings.md C-23)."""
+        silently replace the earlier photo (claude-findings.md C-23).
+
+        A filesystem without hard links has no such atomic claim, and the "check that it is free, then rename"
+        fallback this used to fall back on lost a photo whenever two uploads passed the check together
+        (bugs-overview BUG-03). The upload fails there instead; no file in the work folder is ever replaced."""
         k = 2
         while True:
             if os.path.dirname(os.path.realpath(dest)) != os.path.realpath(self.folder):     # a symlink planted here
@@ -204,10 +214,11 @@ class App:
                 os.link(tmp, dest)
             except FileExistsError:
                 pass                        # someone else has this name now (or already had it): fall through
-            except OSError:
-                if not os.path.lexists(dest):       # e.g. no hard links on this filesystem: the old, non-atomic way
-                    publish(tmp, dest)
-                    return dest
+            except OSError as e:
+                if e.errno in NO_HARD_LINKS:
+                    raise OSError(e.errno, 'this folder cannot claim a name safely (no hard links here, as on exFAT '
+                                  'and some network drives); choose a work folder on a local disk') from e
+                raise                       # a permission or I/O error: reported as it is, with tmp cleaned up
             else:
                 try:
                     os.chmod(dest, 0o666 & ~_UMASK)
@@ -263,7 +274,7 @@ class App:
             except SystemExit as e:
                 self.phase, self.error = 'failed', str(e)
             except Exception as e:                       # noqa: BLE001  (shown on the page, the server carries on)
-                self.phase, self.error = 'failed', f'{e.__class__.__name__}: {e}'
+                self.phase, self.error = 'failed', f'{e.__class__.__name__}: {e}' if str(e) else e.__class__.__name__
         threading.Thread(target=work, daemon=True).start()
 
     def busy(self):
@@ -337,9 +348,9 @@ class App:
             return out
         for n in names:
             p = os.path.join(self.folder, n)
-            if os.path.splitext(n)[1].lower() not in IMAGE_EXT or not os.path.isfile(p):
+            if os.path.splitext(n)[1].lower() not in IMAGE_EXT or not os.path.isfile(p) or is_export_name(n):
                 continue
-            geo, side = load_geo(p) if os.path.exists(sidecar_path(p)) else (None, None)
+            geo, side = load_geo(p)
             g = side.get('quality_gate') if isinstance(side, dict) else None
             low = isinstance(g, dict) and not g.get('ok', True)
             reasons = [r for r in (g.get('reasons') or []) if isinstance(r, str)] if low and isinstance(g, dict) else []

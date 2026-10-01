@@ -243,10 +243,15 @@ def capture_time(name):
 
 
 def _sidecar_time(path):
-    """The capture time given with --time (kept in the sidecar's quality block), for a name that does not carry one."""
+    """The capture time given with --time (kept in the sidecar's quality block), for a name that does not carry one.
+    Resolved through atlas_geo's sidecar identity rules (canonical per-extension file, or a validated legacy one),
+    not a bare splitext guess, so this agrees with load_geo()/save_geo() about which sidecar belongs to path."""
+    from atlas_geo import resolve_sidecar                      # local: atlas_geo does not import this module
     try:
-        with open(os.path.splitext(os.path.abspath(path))[0] + '.atlas.json') as fh:
-            when = json.load(fh)['quality']['capture_utc']
+        _, d = resolve_sidecar(os.path.abspath(path))
+        if d is None or 'problem' in d and set(d) == {'problem'}:
+            return None
+        when = d['quality']['capture_utc']
         return datetime.strptime(when, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None

@@ -279,7 +279,9 @@ class Sidecars(S.TempDir, unittest.TestCase):
         self.assertIn('月', S.sidecar(p)['edits']['shapes'][0]['label'])
 
     def test_path_forms(self):
-        self.assertEqual(ag.sidecar_path('/x/y/m.v2.final.TIF'), '/x/y/m.v2.final.atlas.json')
+        # the full name, extension included, so same-stem images (moon.tif / moon.jpg) never share a sidecar
+        # (bugs-overview BUG-05)
+        self.assertEqual(ag.sidecar_path('/x/y/m.v2.final.TIF'), '/x/y/m.v2.final.TIF.atlas.json')
         self.assertEqual(ag.sidecar_path('noext'), 'noext.atlas.json')
         self.assertEqual(av.tile_dir('/a/b.tif'), av.tile_dir('/a/b.tif'))         # stable between runs
         self.assertNotEqual(av.tile_dir('/a/b.tif'), av.tile_dir('/a/c.tif'))

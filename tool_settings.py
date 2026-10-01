@@ -2,7 +2,8 @@
 the .env file next to this module (not committed). Every key is declared once in SPECS below, with its type, default and
 allowed range, so the tools, their --help and .env.example agree.
 
-    KEY=VALUE per line; # starts a comment; surrounding quotes are stripped.
+    KEY=VALUE per line; # starts a comment, unless it is inside a quoted value; matching outer quotes are
+    stripped. Nothing in a value is expanded or executed.
     Precedence: command-line option > environment variable of the same name > .env > built-in default.
     A value outside its range (or an unknown key: a typo) is reported once and the default is used.
 
@@ -45,6 +46,8 @@ SPECS = [
           'focal extenders as name:factor, comma-separated; factor per entry', 0.2, 10),
         S('LUNARATLAS_CAMERAS', 'pairs', 'IMX678:2.0, IMX533:3.76, IMX462:2.9',
           'cameras as name:pixel size in µm, comma-separated; µm per entry', 0.5, 30),
+        S('LUNARATLAS_BINNINGS', 'pairs', '1×1:1, 2×2:2',
+          'camera binning modes as name:factor, comma-separated; factor per entry', 1, 8),
     ]),
     ('lunaratlas export (labelled images)', [
         S('LUNARATLAS_FORMAT', 'choice', 'tiff', 'output format when -o does not decide it', choices=('tiff', 'png', 'jpg')),
@@ -150,6 +153,17 @@ NOT_SETTINGS = frozenset((
 _raw, _warned = None, set()
 
 
+def _env_value(v):
+    """The value of one .env assignment. Quotes are read before the inline comment is stripped, so a '#' inside a
+    quoted value stays literal ('C#11 EdgeHD'); only matching outer quotes are removed, and nothing is expanded."""
+    v = v.strip()
+    if v[:1] in ('"', "'"):
+        end = v.find(v[0], 1)
+        if end > 0:
+            return v[1:end]                      # unterminated quote: fall through to the plain reading below
+    return v.split('#', 1)[0].strip().strip('"').strip("'")
+
+
 def _read():
     global _raw
     if _raw is None:
@@ -157,10 +171,13 @@ def _read():
         try:
             with open(os.path.join(ENV_DIR or ROOT, '.env'), encoding='utf-8-sig') as fh:
                 for line in fh:
-                    line = line.split('#', 1)[0].strip()
-                    if '=' in line:
-                        k, v = line.split('=', 1)
-                        raw[k.strip()] = (v.strip().strip('"').strip("'"), '.env')
+                    line = line.strip()
+                    if not line or line[0] == '#' or '=' not in line:
+                        continue
+                    k, v = line.split('=', 1)
+                    if '#' in k or not k.strip():    # a comment that happens to contain '=', not an assignment
+                        continue
+                    raw[k.strip()] = (_env_value(v), '.env')
         except OSError:
             pass
         raw.update({k: (v, 'environment') for k, v in os.environ.items()
@@ -228,13 +245,22 @@ def _convert(s, v):
     if k == 'pairs':
         out = []
         for part in v.split(','):
-            name, val = part.rsplit(':', 1)
-            x = float(val)
+            part = part.strip()
+            if not part:                         # a trailing or doubled comma, as the list parser also ignores
+                continue
+            name, _, val = part.rpartition(':')
+            name = name.strip()
+            if not name:
+                raise ValueError(f'{part!r}: expected NAME:VALUE')
+            try:
+                x = float(val)
+            except ValueError:
+                raise ValueError(f'{name}: {val.strip()!r} is not a number')
             if not math.isfinite(x):
-                raise ValueError(f'{name.strip()}: not a finite number')
+                raise ValueError(f'{name}: not a finite number')
             if not _in_range(s, x):
-                raise ValueError(f'{name.strip()}: {x:g} outside {range_text(s)}')
-            out.append((name.strip(), x))
+                raise ValueError(f'{name}: {x:g} outside {range_text(s)}')
+            out.append((name, x))
         if not out:
             raise ValueError('empty')
         return out

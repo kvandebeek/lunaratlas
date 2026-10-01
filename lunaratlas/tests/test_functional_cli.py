@@ -3,7 +3,9 @@ settings registry."""
 import argparse
 import io
 import json
+import math
 import os
+import warnings
 import subprocess
 import sys
 import unittest
@@ -54,6 +56,45 @@ class OutputPlan(S.TempDir, unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 ma.output_plan(ns(self.img, **kw))
             self.assertIn(word, str(cm.exception))
+
+    def test_same_stem_siblings_get_disambiguated_default_names(self):
+        """bugs-overview BUG-05's output collision: moon.tif and moon.jpg used to both default to
+        moon_atlas.tif. An unambiguous image still gets the short familiar name."""
+        jpg = os.path.join(self.tmp, 'moon.jpg')
+        cv2.imwrite(jpg, np.zeros((4, 4), np.uint8))
+        out_tif = ma.output_plan(ns(self.img))[1]
+        out_jpg = ma.output_plan(ns(jpg))[1]
+        self.assertNotEqual(out_tif, out_jpg)
+        self.assertEqual(out_tif, os.path.join(self.tmp, 'moon.tif_atlas.tif'))
+        self.assertEqual(out_jpg, os.path.join(self.tmp, 'moon.jpg_atlas.tif'))
+
+    def test_case_variant_extensions_still_collide(self):
+        # most filesystems these tests run on are case-insensitive, so a real second file of a different case
+        # cannot be created to prove this end to end; the comparison itself (output_plan's own os.listdir scan)
+        # is checked directly instead, with a case-differing name handed to it as if listdir had returned it
+        with mock.patch.object(os, 'listdir', return_value=['moon.tif', 'MOON.JPG']):
+            out = ma.output_plan(ns(self.img))[1]
+        self.assertEqual(os.path.basename(out), 'moon.tif_atlas.tif')
+
+    def test_a_default_destination_owned_by_a_different_source_is_refused(self):
+        """A default output file whose manifest names a different source image must not be silently replaced
+        (e.g. left over from before same-stem disambiguation, or any other collision)."""
+        out = ma.output_plan(ns(self.img))[1]
+        with open(out, 'wb') as fh:
+            fh.write(b'not really an export')
+        with open(out + '.export.json', 'w') as fh:
+            json.dump(dict(source=os.path.join(self.tmp, 'someone_else.tif')), fh)
+        with self.assertRaises(SystemExit) as cm:
+            ma.output_plan(ns(self.img))
+        self.assertIn('belongs to a different source image', str(cm.exception))
+
+    def test_a_default_destination_owned_by_this_source_is_still_replaced_without_asking(self):
+        out = ma.output_plan(ns(self.img))[1]
+        with open(out, 'wb') as fh:
+            fh.write(b'an old export of this same image')
+        with open(out + '.export.json', 'w') as fh:
+            json.dump(dict(source=os.path.abspath(self.img)), fh)
+        self.assertEqual(ma.output_plan(ns(self.img))[1], out)        # no refusal
 
     def test_never_the_sidecar(self):
         side = ag.sidecar_path(self.img)
@@ -139,6 +180,49 @@ class Commands(S.TempDir, unittest.TestCase):
         code, out = S.run_main('export', self.img, *args)
         self.assertIsNone(code, out)
         return out
+
+    @S.needs_all
+    def test_north_up_export_keeps_a_moved_label_on_its_feature(self):
+        """BUG-10, end to end: a label moved in the viewer must still sit next to its own feature (not drift to
+        wherever the old offset-only rotation happened to put it) after --north-up. Checked by actually drawing
+        the export and finding the label's own pixels near where the independent anchor math says they belong,
+        not merely that export_command runs without raising."""
+        import atlas_geo as ag, atlas_render as ar
+        geo, side = ag.load_geo(self.img)
+        feats = S.projected_features(geo)
+        named = next(f for f in feats if f['name'] not in ('',) and f['diam'] > 40 and f['z'] > 0.3)
+        fonts = ar.Fonts('Roboto', S.quiet)
+        home = ar.label_anchor(named, geo, fonts, min_px=10)
+        self.assertIsNotNone(home)
+        dx, dy = 40.0, -25.0
+        d = S.sidecar(self.img)
+        d['edits'] = dict(labels={named['name']: dict(dx=dx, dy=dy, colour='#ffffff')})
+        ag.write_json_atomic(ag.sidecar_path(self.img), d)
+        out = os.path.join(self.tmp, 'turned.png')
+        self.export('--north-up', '--format', 'png', '--min-size', '10', '-o', out)
+        img = cv2.imread(out, cv2.IMREAD_UNCHANGED)
+        self.assertIsNotNone(img)
+        # independently recompute where the moved label should land: the new geometry/turn this same export used
+        raw = cv2.imread(self.img, cv2.IMREAD_UNCHANGED)
+        _, new_geo, (M, b) = ag.north_up(raw, geo)
+        new_feats = S.projected_features(new_geo)
+        nf = next(f for f in new_feats if f['name'] == named['name'])
+        home_new = ar.label_anchor(nf, new_geo, fonts, min_px=10)
+        self.assertIsNotNone(home_new)
+        want = (M @ np.array([home[0] + dx, home[1] + dy]) + b)
+        wx, wy = int(round(float(want[0]))), int(round(float(want[1])))
+        H, W = img.shape[:2]
+        self.assertTrue(0 <= wx < W and 0 <= wy < H, (wx, wy, W, H))
+        patch = img[max(0, wy - 25):wy + 25, max(0, wx - 60):wx + 60]
+        self.assertGreater(patch.size, 0)
+        self.assertTrue((patch > 10).any(), 'something was drawn near the independently computed position')
+        # and NOT near where the old offset-only rotation would have put it, unless the two happen to coincide
+        legacy_dx, legacy_dy = (M @ np.array([dx, dy]))
+        lx, ly = int(round(home_new[0] + legacy_dx)), int(round(home_new[1] + legacy_dy))
+        if math.hypot(lx - wx, ly - wy) > 80:           # far enough apart to be a meaningful check
+            legacy_patch = img[max(0, ly - 25):ly + 25, max(0, lx - 60):lx + 60]
+            self.assertFalse((legacy_patch > 10).any(),
+                             'the label is at the correct spot, not the old offset-only-rotation spot')
 
     def test_info(self):
         code, out = S.run_main('info', self.img)
@@ -234,9 +318,19 @@ class Commands(S.TempDir, unittest.TestCase):
                            (('--max-size', '0'), 'at least 1'), (('--quality', '101'), '0 to 100'),
                            (('--region', '1,2,3'), 'expected 4'), (('--region', '0,0,0,10'), 'at least 1 px'),
                            (('--region', '5000,5000,10,10'), 'outside'), (('--around', 'Nowhere'), 'no feature'),
-                           (('--around', 'Hertzsprung'), 'far side'), (('--layers', 'moons'), 'unknown')):
+                           (('--around', 'Hertzsprung'), 'far side'), (('--layers', 'moons'), 'unknown'),
+                           (('--around', ' '), 'needs a feature name')):     # BUG-17
             code, out = S.run_main('export', self.img, *args)
             self.assertIn(word, str(code), args)
+
+    def test_a_blank_around_is_rejected_before_anything_is_located_or_downloaded(self):
+        """BUG-17: a whitespace-only --around used to export around whatever feature sorted first, after a full
+        locate (and a download on a first run). It must fail immediately, before that work starts."""
+        img = os.path.join(self.tmp, 'never_located.tif')
+        S.cv2.imwrite(img, np.zeros((20, 20), np.uint8))
+        code, out = S.run_main('export', img, '--around', '   ')
+        self.assertIn('needs a feature name', str(code), out)
+        self.assertFalse(os.path.exists(ag.sidecar_path(img)), 'no locate (and so no sidecar) was attempted')
 
     def test_quality_gate_refusal_and_force(self):
         d = S.sidecar(self.img)
@@ -282,8 +376,9 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         cv2.imwrite(img, np.zeros((10, 10), np.uint8))
         S.locate_as(img, S.truth_geometry())
         import threading
-        saved = av.write_edits(img, dict(shapes=[dict(kind='text', x=1, y=2, label='hi')], hidden=['Tycho']),
-                               threading.Lock())
+        ok, saved, _ = av.write_edits(img, dict(shapes=[dict(kind='text', x=1, y=2, label='hi')], hidden=['Tycho']),
+                                      threading.Lock())
+        self.assertTrue(ok)
         self.assertIn('saved', saved)
         self.assertEqual(av.read_edits(img)['hidden'], ['Tycho'])
         geo, d = ag.load_geo(img)
@@ -331,7 +426,7 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         self.assertEqual(cmd[cmd.index('--scale') + 1], '0.5')
         self.assertEqual(cmd[cmd.index('--layers') + 1], 'none')
         self.assertNotIn('--font', cmd)
-        self.assertNotIn('--night', cmd)
+        self.assertEqual(cmd[cmd.index('--night') + 1], 'hide', 'an unknown value is the dialog default, always sent')
         self.assertEqual(cmd[cmd.index('--format') + 1], 'tiff')
         self.assertTrue(out.endswith('moon_atlas_Rupes_Recta.tif'))
 
@@ -354,6 +449,81 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
             self.assertTrue(ok)
             if ln['kind'] == 'lat':
                 self.assertAlmostEqual(float(la), ln['value'], delta=0.15)       # points are rounded to 0.1 px
+
+    def test_a_dim_float_image_reaches_the_full_display_range(self):
+        """bugs-overview BUG-18: `max(white, 1)` meant a valid 0-1 float image with a white point below 1
+        (e.g. 0.3) was stretched as if white were 1 -- the display tile stayed far too dark."""
+        img = os.path.join(self.tmp, 'dim.tif')
+        rng = np.random.default_rng(0)
+        raw = (rng.random((300, 300)).astype(np.float32) * 0.3)         # white point ~0.3, not 1.0
+        cv2.imwrite(img, raw)
+        with mock.patch.object(av, 'CACHE', os.path.join(self.tmp, 'cache1')):
+            av.build_tiles(img, raw, S.quiet)
+            t = cv2.imread(os.path.join(av.tile_dir(img), '0', '0_0.jpg'), cv2.IMREAD_GRAYSCALE)
+        self.assertGreater(t.max(), 200, 'the white point is used as-is, not clamped to 1')
+
+    def test_nan_inf_and_negative_float_pixels_do_not_poison_or_brighten(self):
+        """Mixed finite/NaN/Inf samples and negative pixels must not crash the percentile, and a negative or
+        non-finite pixel must render black, not bright (convertScaleAbs takes the absolute value)."""
+        img = os.path.join(self.tmp, 'odd.tif')
+        raw = np.zeros((300, 300), np.float32)
+        raw[:] = 0.5
+        raw[0:50, 0:50] = np.nan
+        raw[50:100, 0:50] = np.inf
+        raw[100:150, 0:50] = -np.inf
+        raw[150:200, 0:50] = -5.0
+        cv2.imwrite(img, raw)
+        with mock.patch.object(av, 'CACHE', os.path.join(self.tmp, 'cache2')):
+            av.build_tiles(img, raw, S.quiet)
+            t = cv2.imread(os.path.join(av.tile_dir(img), '0', '0_0.jpg'), cv2.IMREAD_GRAYSCALE)
+        self.assertTrue(np.isfinite(t).all())
+        tol = 6                                        # lossy JPEG (quality 86): check well inside each block,
+                                                        # away from ringing at a sharp 0-vs-0.5 edge
+        self.assertLessEqual(t[10:40, 10:40].max(), tol, 'NaN pixels are black')
+        self.assertLessEqual(t[60:90, 10:40].max(), tol, 'Inf pixels are black, not bright via abs()')
+        self.assertLessEqual(t[110:140, 10:40].max(), tol, '-Inf pixels are black')
+        self.assertLessEqual(t[160:190, 10:40].max(), tol, 'a negative pixel is black, not bright via abs()')
+        self.assertGreater(t[200:, 200:].max(), 200, 'the valid 0.5 region still reaches the display range')
+
+    def test_an_all_invalid_or_all_zero_float_image_is_black_without_a_warning(self):
+        for raw in (np.zeros((50, 50), np.float32), np.full((50, 50), np.nan, np.float32)):
+            img = os.path.join(self.tmp, 'blank.tif')
+            cv2.imwrite(img, raw)
+            with mock.patch.object(av, 'CACHE', os.path.join(self.tmp, f'cache_blank_{raw[0,0]}')), \
+                 warnings.catch_warnings():
+                warnings.simplefilter('error')
+                av.build_tiles(img, raw, S.quiet)
+                t = cv2.imread(os.path.join(av.tile_dir(img), '0', '0_0.jpg'), cv2.IMREAD_GRAYSCALE)
+            self.assertTrue((t == 0).all())
+
+    def test_an_old_cache_without_a_render_version_is_rebuilt(self):
+        """An on-disk pyramid from before this fix (no 'render' key in meta.json) must be rebuilt, not reused,
+        so an old too-dark tile is never served from the on-disk cache (bugs-overview BUG-18)."""
+        img = os.path.join(self.tmp, 'old.tif')
+        raw = (np.random.default_rng(1).random((300, 300)).astype(np.float32) * 0.3)
+        cv2.imwrite(img, raw)
+        with mock.patch.object(av, 'CACHE', os.path.join(self.tmp, 'cache3')):
+            av.build_tiles(img, raw, S.quiet)
+            meta_p = os.path.join(av.tile_dir(img), 'meta.json')
+            with open(meta_p) as fh:
+                meta = json.load(fh)
+            del meta['render']                       # as an old cache, written before TILE_RENDER_VERSION existed
+            with open(meta_p, 'w') as fh:
+                json.dump(meta, fh)
+            msgs = []
+            self.assertEqual(av.build_tiles(img, raw, msgs.append), av.build_tiles(img, raw, S.quiet))
+            self.assertIn('tiles built', msgs[-1], 'an old-version cache is rebuilt, not reused')
+            with open(meta_p) as fh:
+                self.assertEqual(json.load(fh)['render'], av.TILE_RENDER_VERSION)
+
+    def test_the_browser_tile_url_changes_with_the_render_version(self):
+        """The cached tile URL the page uses must also depend on TILE_RENDER_VERSION, not only the image's own
+        signature, so a browser that already cached an old, too-dark tile fetches a fresh one."""
+        img = os.path.join(self.tmp, 'url.tif')
+        cv2.imwrite(img, np.zeros((20, 20), np.uint8))
+        with mock.patch.object(av, 'TILE_RENDER_VERSION', av.TILE_RENDER_VERSION + 1):
+            bumped = av.tile_version(img)
+        self.assertNotEqual(av.tile_version(img), bumped)
 
     def test_build_tiles(self):
         img = os.path.join(self.tmp, 'big.tif')
@@ -566,9 +736,41 @@ class Settings(S.TempDir, unittest.TestCase):
         self.assertEqual(err, '')
         self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 1500.0)
 
-    def test_hash_always_starts_a_comment(self):
-        self.env_file('LUNARATLAS_OBSERVER_NAME="Site #2"\n')                    # documented: even inside quotes
-        self.assertEqual(ts.get('LUNARATLAS_OBSERVER_NAME'), 'Site')
+    def test_hash_starts_a_comment_except_inside_quotes(self):
+        """BUG-20: the parser used to strip the comment before the quotes, so a telescope named "C#11 EdgeHD"
+        arrived as "C". Quotes are read first now; an unquoted # still starts a comment."""
+        for text, want in (('LUNARATLAS_TELESCOPE="C#11 EdgeHD"', 'C#11 EdgeHD'),
+                           ("LUNARATLAS_TELESCOPE='C#11 EdgeHD'", 'C#11 EdgeHD'),
+                           ('LUNARATLAS_TELESCOPE="C#11 EdgeHD"  # the scope', 'C#11 EdgeHD'),
+                           ('LUNARATLAS_TELESCOPE=C11 # the scope', 'C11'),
+                           ('LUNARATLAS_TELESCOPE=C#11', 'C'),                   # unquoted: still a comment
+                           ('LUNARATLAS_TELESCOPE="C11', 'C11'),                 # unterminated: read as before
+                           ('# LUNARATLAS_TELESCOPE=C11', '250 PDS'),   # a commented-out line stays off
+                           ('# a comment that mentions key=value', '250 PDS')):
+            with self.subTest(text):
+                err = self.env_file(text + '\n')
+                self.assertEqual(err, '', text)
+                self.assertEqual(ts.get('LUNARATLAS_TELESCOPE'), want)
+
+    def test_pairs_tolerates_a_trailing_comma(self):
+        """BUG-21: one empty item used to abort the whole setting with an unpacking error, so every camera was
+        lost; the list parser already skipped empty items."""
+        err = self.env_file('LUNARATLAS_CAMERAS=IMX678:2.0, IMX533:3.76,\n')
+        self.assertEqual(err, '')
+        self.assertEqual(ts.get('LUNARATLAS_CAMERAS'), [('IMX678', 2.0), ('IMX533', 3.76)])
+
+    def test_pairs_rejects_empty_and_malformed_entries_with_a_reason(self):
+        self.env_file('LUNARATLAS_CAMERAS= , ,\nLUNARATLAS_BINNINGS=IMX678\nLUNARATLAS_EXTENDERS=native:x\n')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            cams, bins, ext = (ts.get('LUNARATLAS_CAMERAS'), ts.get('LUNARATLAS_BINNINGS'),
+                               ts.get('LUNARATLAS_EXTENDERS'))
+        self.assertEqual(cams, [('IMX678', 2.0), ('IMX533', 3.76), ('IMX462', 2.9)])   # all empty: still invalid
+        self.assertEqual(bins, [('1×1', 1.0), ('2×2', 2.0)])
+        self.assertEqual(ext[0], ('native', 1.0))
+        self.assertIn('empty', err.getvalue())
+        self.assertIn('expected NAME:VALUE', err.getvalue())
+        self.assertIn('is not a number', err.getvalue())
 
     def test_undeclared_keys(self):
         self.env_file('LUNARATLAS_BASELINE_DIR=/x\n')

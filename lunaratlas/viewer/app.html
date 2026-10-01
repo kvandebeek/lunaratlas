@@ -54,8 +54,12 @@ input[type=datetime-local]:focus-visible { outline: none; box-shadow: var(--focu
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
 
 /* ---- progress */
-#work .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+#work .head { display: flex; align-items: center; gap: 14px; }
+#work .head .htxt { flex: 1; min-width: 0; }
 #work .head b { font-size: 17px; font-weight: 600; }
+#work .head .pname { display: block; margin-top: 2px; color: var(--text-3); font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#work .head .pname:empty { display: none; }
 #work .head .time { color: var(--text-3); font-size: 13px; font-variant-numeric: tabular-nums; }
 .bar { height: 6px; background: rgba(255, 255, 255, .08); border-radius: 3px; overflow: hidden; margin: 14px 0 16px; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width .5s var(--ease); }
@@ -68,11 +72,9 @@ ol.stages li.active { color: var(--text); font-weight: 500; }
 ol.stages li.active .dot { border-color: var(--accent); }
 ol.stages li.active .dot::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 ol.stages li.active .note { color: var(--text-2); }
-ol.stages li.done { color: var(--text-2); }
-ol.stages li.done .dot { border-color: transparent; background: rgba(143, 216, 236, .16); color: var(--grid); }
-ol.stages li.done .dot::after { content: ''; width: 7px; height: 4px; border: solid currentColor; border-width: 0 0 1.6px 1.6px; transform: translateY(-1px) rotate(-45deg); }
-ol.stages li.skip { color: var(--text-3); }
-ol.stages li.skip .dot { border-style: dashed; }
+ol.stages li.done, ol.stages li.skip { color: var(--text-2); }
+ol.stages li.done .dot, ol.stages li.skip .dot { border-color: transparent; background: rgba(143, 216, 236, .16); color: var(--grid); }
+ol.stages li.done .dot::after, ol.stages li.skip .dot::after { content: ''; width: 7px; height: 4px; border: solid currentColor; border-width: 0 0 1.6px 1.6px; transform: translateY(-1px) rotate(-45deg); }
 ol.stages li.failed { color: var(--danger); }
 ol.stages li.failed .dot { border-color: var(--danger); }
 @keyframes pulse { 50% { opacity: .35; } }
@@ -103,8 +105,10 @@ ul.recent li { display: flex; align-items: center; gap: 14px; padding: 9px 10px;
 ul.recent li + li { margin-top: 2px; }
 ul.recent li:hover { background: var(--bg-2); }
 ul.recent li:active { background: var(--bg-3); }
-ul.recent .thumb { width: 52px; height: 52px; border-radius: 8px; flex: none; background: var(--bg-0) center/cover no-repeat; border: 1px solid var(--line); overflow: hidden; }
-ul.recent .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* the chosen photo, as a small square: in the progress header and beside an earlier photo */
+.thumb { width: 52px; height: 52px; border-radius: 8px; flex: none; background: var(--bg-0) center/cover no-repeat; border: 1px solid var(--line); overflow: hidden; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#work .head .thumb { width: 56px; height: 56px; }
 ul.recent .meta { flex: 1; min-width: 0; }
 ul.recent .name { display: flex; min-width: 0; font-weight: 500; white-space: nowrap; }
 ul.recent .name .a { overflow: hidden; text-overflow: ellipsis; }
@@ -181,7 +185,11 @@ footer > .linkbtn { flex: none; }
   </section>
 
   <section class="card" id="work" hidden aria-live="polite">
-    <div class="head"><b id="wtitle">Working…</b><span class="time" id="wtime"></span></div>
+    <div class="head">
+      <div class="thumb" id="wthumb" hidden><img id="wimg" alt="" decoding="async"></div>
+      <div class="htxt"><b id="wtitle">Working…</b><span class="pname" id="wname"></span></div>
+      <span class="time" id="wtime"></span>
+    </div>
     <div class="bar" id="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div>
     <ol class="stages" id="stages"></ol>
     <span class="hint" id="wstep"></span>
@@ -191,7 +199,7 @@ footer > .linkbtn { flex: none; }
       <button class="btn primary" id="force" hidden>Name it anyway</button>
       <button class="btn" id="again" hidden>Choose another photo</button>
     </div>
-    <details class="log"><summary>Details</summary>
+    <details class="log" open><summary>Details</summary>
       <div class="logwrap"><pre id="log"></pre><button class="btn sm" id="copy">Copy</button></div>
     </details>
   </section>

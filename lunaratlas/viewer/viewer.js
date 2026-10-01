@@ -107,7 +107,11 @@
             sessionGone = true;
             $('#saveState').textContent = 'not saved — this image was closed in another window · reload to keep editing';
             toast('This image was closed in another window · reload the page to keep editing it');
-            return;
+            // rejects (not resolves): a caller such as the export flow must not proceed as if this save had
+            // landed (bugs-overview BUG-04/BUG-14 item 5) — dirty stays set so a retry (if the page is reloaded
+            // first) is still possible, and the chain's own .catch keeps this from stopping later saves
+            dirty = true;
+            const e = new Error('session gone'); e.handled = true; throw e;
           }
           if (r.status === 409) {                     // this request was superseded by a higher revision
             if (typeof j.rev === 'number' && j.rev > rev) {
@@ -116,7 +120,8 @@
               rev = j.rev;
               $('#saveState').textContent = 'not saved — edited in another window just now';
               toast('This image was edited in another window: your last change was not saved');
-              return;
+              dirty = true;              // rejects: see the comment on the 'gone' branch just above
+              const e = new Error('conflict'); e.handled = true; throw e;
             }
             $('#saveState').textContent = 'saved';     // our own later request already landed this content
             clearPending();
@@ -124,7 +129,11 @@
           }
           throw new Error(r.status);
         })
-        .catch((e) => { dirty = true; $('#saveState').textContent = 'not saved — is lunaratlas view still running?'; throw e; });
+        .catch((e) => {
+          dirty = true;
+          if (!e.handled) $('#saveState').textContent = 'not saved — is lunaratlas view still running?';
+          throw e;
+        });
     };
     const p = chain.then(send, send);
     chain = p.catch(() => {});
@@ -186,7 +195,7 @@
       im = new Image();
       loadingTiles++;
       im.onload = () => { im.ok = true; tileDone(); redraw(); };
-      im.onerror = tileDone;
+      im.onerror = () => { im.bad = true; tileDone(); };   // remembered: a neighbour that never arrives must not be waited for
       im.src = '/tiles/' + k + '.jpg?v=' + A.tiles_v;      // per image: the browser keeps tiles for a day
       cache.set(k, im);
       if (cache.size > 900) { const first = cache.keys().next().value; cache.delete(first); }
@@ -214,6 +223,12 @@
   }
   const scr = (x, y) => [(x - view.x) * view.s + VW / 2, (y - view.y) * view.s + VH / 2];
   const img = (sx, sy) => [(sx - VW / 2) / view.s + view.x, (sy - VH / 2) / view.s + view.y];
+
+  // ------------------------------------------------------------ the whole Moon behind a close-up
+  // A close-up photo only covers part of the Moon; zooming out used to drop an LROC disk image behind it
+  // for context, but that image never lined up cleanly with the photo's own tiles. The lat/lon grid
+  // (drawGrid, toggled from the layer panel) gives the same "where on the Moon is this" context without
+  // the misalignment, so the disk image is no longer drawn.
 
   // ------------------------------------------------------------ labels
   const fontStr = (w, size, it, fam) => `${it ? 'italic ' : ''}${w} ${size}px "${fam || set.font}", "IBM Plex Sans", system-ui, sans-serif`;
@@ -529,7 +544,10 @@
   function render() {
     pending = false;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = C.bg0; ctx.fillRect(0, 0, VW, VH);
+    // Space is black, so a close-up reads as a globe with your photo on it. For a full-disk photo the tiles
+    // ARE the Moon and nothing changes: the app's own background stays.
+    ctx.fillStyle = A.globe ? '#000' : C.bg0;
+    ctx.fillRect(0, 0, VW, VH);
     drawTiles();
     drawGrid();
     const [ix0, iy0] = scr(-0.5, -0.5), [ix1, iy1] = scr(A.width - 0.5, A.height - 0.5);
@@ -593,7 +611,11 @@
     const s = Math.max(0.02, Math.min((VW - 40) / d, (VH - 150) / d, VW / A.width, VH / A.height));
     view.s = s; view.x = G.t[0]; view.y = G.t[1] + 8 / s; redraw();
   }
-  const minS = () => Math.min(VW / A.width, VH / A.height) * 0.3, maxS = 4;
+  // Zooming out stops when the whole Moon fits, not when the photo plus a margin fits: for a close-up the Moon
+  // is tens of times the frame wide, so the photo-only floor made the globe unreachable (the disk-fit branch of
+  // fit() could never be zoomed into). `min` keeps a full-disk photo exactly as it was.
+  const minS = () => Math.min(Math.min(VW / A.width, VH / A.height) * 0.20,
+                              Math.min(VW, VH) * 0.3 / A.radius_px), maxS = 8;
   function zoomAt(sx, sy, factor) {
     const [ix, iy] = img(sx, sy);
     view.s = clamp(view.s * factor, minS(), maxS);

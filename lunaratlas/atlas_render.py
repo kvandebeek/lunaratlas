@@ -93,14 +93,20 @@ class Fonts:
                         err = e
                 except Exception as e:                             # offline, DNS, timeout
                     err = e
-            if not listing and usable:
+            if listing is None and usable:
                 log(f'font {family}: cannot download ({err or "not found"}); using the files already here')
                 listing, files = [], usable
-            elif not listing:
+            elif listing is None:
                 raise SystemExit(f'cannot reach Google Fonts for "{family}": {err}' if err else
                                  f'font "{family}" not found on Google Fonts')
             want = self._listed(listing)
-            if want:
+            if not want:
+                if usable:
+                    log(f'font {family}: Google Fonts has no usable font files; using the files already here')
+                    files = usable
+                else:
+                    raise SystemExit(f'font "{family}" has no usable .ttf files on Google Fonts')
+            else:
                 log(f'downloading font {family} ({len(want)} files, once)')
                 open(pending, 'w').close()
                 try:
@@ -119,6 +125,8 @@ class Fonts:
     def _listed(listing):
         """The .ttf files of a GitHub contents listing that may be fetched: a plain file name (no folders) whose
         download_url is on raw.githubusercontent.com/google/fonts."""
+        if not isinstance(listing, list):
+            return []
         return [e for e in listing if isinstance(e, dict) and isinstance(e.get('name'), str) and e['name'].lower().endswith('.ttf')
                 and re.fullmatch(r'\w[\w .()\[\],-]{0,127}\.ttf', e['name'], re.I)
                 and str(e.get('download_url')).startswith(GOOGLE_FONTS_RAW)]
@@ -272,6 +280,17 @@ def layout(feats, geo, view, fonts, min_px=24, font_scale=1.0, rims=True, letter
     to_out, scale = view_mapper(view)
     overrides = overrides if isinstance(overrides, dict) else {}         # the sidecar is shared: types are checked
     hidden = {n for n in hidden if isinstance(n, str)} if isinstance(hidden, (list, tuple, set)) else set()
+    if light is not None:
+        # a stale cache, or any other caller supplying an array for a different feature list, must not be
+        # indexed below: treat anything that is not exactly one finite value per feats as unknown, the same as
+        # light=None already means (bugs-overview BUG-07)
+        try:
+            light = np.asarray(light, float)
+        except (TypeError, ValueError):
+            light = None
+        else:
+            if light.ndim != 1 or len(light) != len(feats) or not np.all(np.isfinite(light)):
+                light = None
 
     C = STYLE['colours']
     R = geo.radius_px * scale
@@ -643,10 +662,35 @@ def clean_shapes(shapes):
     return out
 
 
-def transform_edits(edits, M, b):
+def label_anchor(f, geo, fonts, min_px=24, font_scale=1.0, layers=LAYERS, rims=True):
+    """The automatic label spot for f alone, in native (unscaled, uncropped) image px: the "home" position a
+    moved label's stored {dx, dy} offset is relative to. layout() computes this same first candidate spot
+    internally for every unmoved label; this asks for it on demand, for one feature, so a moved label's absolute
+    on-screen position can be resolved under a different geometry (bugs-overview BUG-10) -- `keep_on_disk=False`
+    and `night='show'` so the feature's own home spot is never withheld by edge/night culling that has nothing
+    to do with where the automatic anchor actually is. None if layout() still finds no spot for it at all (its
+    class/size/the given settings would never label it, moved or not)."""
+    view = (0, 0, 1.0, 20000, 20000)        # identity to_out (output px are native source px); bigger than any
+                                             # real capture, but bounded -- layout()'s occlusion grid is this/cell
+    labs = layout([f], geo, view, fonts, min_px=min_px, font_scale=font_scale, rims=rims, layers=layers,
+                 night='show', keep_on_disk=False, hidden=(), overrides=None, reserved=())
+    return (labs[0]['x'], labs[0]['y']) if labs else None
+
+
+def transform_edits(edits, M, b, anchors=None):
     """The viewer's edits for an image that was turned by new = M @ old + b (M a rotation, maybe with a mirror): the
     drawings, and the moved names' offsets. An ellipse or a rectangle is an outline of its own after a turn that is not a
-    right angle, so those become closed outlines."""
+    right angle, so those become closed outlines.
+
+    anchors: optional (old_home, new_home) lookup by feature name -- each a (x, y) native-px pair from
+    label_anchor(), under the geometry before and after the turn, with the SAME fonts/min_px/font_scale/layers/
+    rims the actual export uses. A moved label is stored as home + offset; rotating the offset alone (as this
+    function used to, unconditionally) is wrong whenever the automatic home itself moves somewhere other than a
+    pure rotation of its old position -- which it generally does, since it depends on the feature's new on-image
+    position, not just the old anchor's own rotation (bugs-overview BUG-10). With anchors, the absolute point
+    (old home + old offset) is transformed as a point, then re-expressed relative to the new home. Without
+    anchors (no geo/font context available, e.g. an old caller or a feature anchors could not place), the
+    offset alone is still rotated, as before -- the established legacy behaviour for data from before this."""
     M, b = np.asarray(M, float), np.asarray(b, float)
     P = lambda x, y: [float(v) for v in M @ [x, y] + b]                        # noqa: E731
     out = dict(edits)
@@ -683,7 +727,14 @@ def transform_edits(edits, M, b):
         for name, v in labels.items():
             v = clean_label_override(v)
             if v and 'dx' in v:
-                v['dx'], v['dy'] = (float(t) for t in M @ [v['dx'], v['dy']])
+                pair = anchors.get(name) if anchors else None
+                if pair and pair[0] is not None and pair[1] is not None:
+                    home_old, home_new = pair
+                    old_point = (home_old[0] + v['dx'], home_old[1] + v['dy'])
+                    new_point = M @ old_point + b
+                    v['dx'], v['dy'] = float(new_point[0] - home_new[0]), float(new_point[1] - home_new[1])
+                else:
+                    v['dx'], v['dy'] = (float(t) for t in M @ [v['dx'], v['dy']])
             if v:
                 moved[name] = v
         out['labels'] = moved

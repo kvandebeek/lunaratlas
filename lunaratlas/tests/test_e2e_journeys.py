@@ -93,7 +93,7 @@ class BatchOfImages(Journey):
                 self.assertEqual(d['image'], n)
                 self.assertAlmostEqual(geo.lat0, self.truth[n].lat0, delta=0.5)
         self.assertEqual(sorted(f for f in os.listdir(self.tmp) if f.endswith('.atlas.json')),
-                         sorted(os.path.splitext(n)[0] + '.atlas.json' for n in self.NAMES))
+                         sorted(n + '.atlas.json' for n in self.NAMES))
         self.assertEqual(self.leftovers(), [])
 
     def test_info_and_find_work_for_each_of_them(self):

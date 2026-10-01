@@ -16,6 +16,7 @@ import contextlib
 import copy
 import csv
 import difflib
+import hashlib
 import json
 import math
 import re
@@ -29,11 +30,13 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tool_settings as ts  # noqa: E402
-from atlas_geo import fit_limb, load_geo, locate, north_up, resize, save_geo, sidecar_path, unresize, write_atomic, R_MOON   # noqa: E402
+from atlas_geo import (NoUsableLimb, fit_limb, image_signature, load_geo, locate, north_up, resize,   # noqa: E402
+                       resolve_sidecar, save_geo, sidecar_path, unresize, write_atomic, write_json_atomic, R_MOON)
+from atlas_paths import IMAGE_EXT, is_export_name                        # noqa: E402
 from atlas_names import load_features                                    # noqa: E402
 from atlas_quality import luminance, measure, thresholds, verdict                   # noqa: E402
 from atlas_render import (DEFAULT_FONT, LAYERS, Fonts, box_of, capture_time, draw, grid_overlay, info_block,  # noqa: E402
-                          layout, light_levels, shapes_overlay, transform_edits)
+                          label_anchor, layout, light_levels, shapes_overlay, transform_edits)
 
 T0 = time.perf_counter()
 
@@ -62,7 +65,7 @@ def quality_gate(image):
         if share >= 0.25:
             (cx0, cy0), R0 = unresize((cx, cy), sx, sy), R / math.sqrt(sx * sy)
             limb = (float(cx0), float(cy0), float(R0))
-    except SystemExit:
+    except NoUsableLimb:          # absent/unreliable limb is expected here: the gate just reports it, not fatal
         pass
     del g
     q = measure(raw, limb)
@@ -77,7 +80,7 @@ def geometry(image, relocate=False, force=False, gate=True, when=None):
     (UTC datetime) for a file whose name does not carry one; it is kept in the sidecar."""
     geo, d = (None, None) if relocate else load_geo(image)
     if geo is not None:
-        log(f'positioning from {os.path.basename(sidecar_path(image))}')
+        log(f'positioning from {os.path.basename(resolve_sidecar(image)[0])}')
         g = d.get('quality_gate')
         if isinstance(g, dict):                      # the sidecar is shared: a damaged gate entry is ignored
             log(g.get('line', ''))
@@ -95,13 +98,17 @@ def geometry(image, relocate=False, force=False, gate=True, when=None):
     log(f'locating {os.path.basename(image)}')
     try:
         if not qm.get('has_limb'):
-            raise SystemExit('no limb in view')
+            raise NoUsableLimb('no limb in view')
         from atlas_ephem import capture_time as _when
         geo, q = locate(image, log, when=when or _when(image))
         if when:
             q['capture_utc'] = when.strftime('%Y-%m-%d %H:%M:%S')
-    except SystemExit as e:
-        # no usable limb (or the full-disk fit failed): a close-up, found blind from its time and optics
+    except NoUsableLimb as e:
+        # no usable limb, an unreliable fit, or too little terrain evidence (bugs-overview BUG-02): a close-up,
+        # found blind from its time and optics. A SystemExit from locate() for any OTHER reason -- a failed
+        # download building the reference map, a full disk, an unreadable image -- is not caught here: it
+        # propagates as the normal fatal error, instead of being misread as "no limb" and triggering a blind
+        # close-up search (which would itself download the LOLA model) before failing again
         from atlas_closeup import locate_closeup
         from atlas_ephem import capture_time
         if when is None and capture_time(image) is None:
@@ -179,6 +186,8 @@ def find_matches(feats, name, limit=5):
     """(the feature, others that fit the name too, names that are near) for a name typed as it comes to mind: the exact
     name wins, else names that start with it (Copernicus -> Copernicus A, B, ...), else spelling that is close."""
     n = name.strip().lower()
+    if not n:                 # a blank/whitespace-only query used to match every feature via startswith('')
+        return None, [], []   # (bugs-overview BUG-17): find IMAGE "" and export --around " " must find nothing
     exact = [f for f in feats if f['name'].lower() == n]
     pre = [f for f in feats if f['name'].lower().startswith(n) and f not in exact]
     if exact:                                       # the exact name, and what else starts with it (Copernicus A, B, …)
@@ -280,6 +289,111 @@ def cmd_find(a):
 EXTENSIONS = {'tiff': ('.tif', '.tiff'), 'png': ('.png',), 'jpg': ('.jpg', '.jpeg')}
 
 
+# ---------------------------------------------------------------- export freshness and provenance
+#
+# bugs-overview BUG-11: --skip-existing only compared the output file's mtime to the source image's, so a saved
+# drawing, a changed font/night/scale/region, or a changed source signature with an unchanged mtime all left a
+# stale export in place, silently reported as "skipped". A small sidecar-like manifest next to the output
+# records what was actually rendered, so freshness is a real comparison, not a timestamp guess.
+EXPORT_MANIFEST_VERSION = 1
+
+
+def _export_manifest_path(out):
+    return out + '.export.json'
+
+
+def _resolve_font(a, image):
+    """The font cmd_export would actually use for image: --font, else the sidecar's own saved choice, else the
+    environment default, else DEFAULT_FONT. Shared with the batch freshness check so a resolved default (e.g.
+    LUNARATLAS_FONT, or the sidecar's style.font) is fingerprinted the same way it will actually be rendered,
+    instead of the unresolved None/blank the CLI argument alone would be before cmd_export fills it in."""
+    if a.font:
+        return str(a.font)
+    edits = (load_geo(image)[1] or {}).get('edits')
+    style = edits.get('style') if isinstance(edits, dict) else None
+    style_font = style.get('font') if isinstance(style, dict) else None
+    return str((style_font if isinstance(style_font, str) else None) or ts.get('LUNARATLAS_FONT') or DEFAULT_FONT)
+
+
+def _effective_export_options(a, fmt, image):
+    """Every export option that can change what gets rendered, at its ACTUAL resolved value (not just what was
+    typed): a changed .env default must invalidate a cached export exactly as a changed flag would."""
+    keys = ('scale', 'max_size', 'region', 'around', 'size', 'north_up', 'layers', 'lettered', 'landing', 'rims',
+           'grid', 'drawings', 'info', 'night', 'min_size', 'font_scale', 'fit', 'quality', 'time')
+    return dict({k: getattr(a, k, None) for k in keys}, format=fmt, font=_resolve_font(a, image))
+
+
+def _export_fingerprint(image, side, options):
+    """A digest of everything that decides what cmd_export(a) renders for image: the source's own signature, the
+    sidecar content actually used (geometry, edits, quality -- whatever load_geo() returned), and the effective
+    options above. Two renders with the same fingerprint would produce the same output; any difference in any of
+    these must be treated as a reason to regenerate, not to skip."""
+    try:
+        src_sig = image_signature(image)
+    except OSError:
+        src_sig = None
+    payload = dict(version=EXPORT_MANIFEST_VERSION,
+                   source=os.path.abspath(image), source_signature=src_sig,
+                   sidecar=json.dumps(side, sort_keys=True, default=str) if isinstance(side, dict) else None,
+                   options=options)
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def export_owner(out):
+    """The source image path recorded in out's manifest, or None (no manifest, or it is unreadable): used to
+    refuse silently overwriting a DEFAULT destination that a different source image actually owns (a same-stem
+    sibling from before this version disambiguated default names, or any other collision)."""
+    try:
+        with open(_export_manifest_path(out)) as fh:
+            m = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return m.get('source') if isinstance(m, dict) else None
+
+
+def export_is_current(image, out, a, fmt):
+    """Whether out already is what cmd_export(a) would produce for image right now (bugs-overview BUG-11): a
+    published manifest naming this exact source, whose fingerprint matches the current source signature,
+    sidecar content, and effective options, AND whose recorded output signature still matches the file on disk
+    (so a manually edited or truncated export is never mistaken for current). Missing, corrupt, or mismatched
+    in any of these ways means stale -- never an mtime guess."""
+    if not os.path.isfile(out):
+        return False
+    try:
+        with open(_export_manifest_path(out)) as fh:
+            m = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(m, dict) or m.get('source') != os.path.abspath(image):
+        return False
+    try:
+        if image_signature(out) != m.get('output_signature'):
+            return False
+    except OSError:
+        return False
+    _, side = load_geo(image)
+    want = _export_fingerprint(image, side, _effective_export_options(a, fmt, image))
+    return m.get('fingerprint') == want
+
+
+def write_export_manifest(image, out, a, fmt):
+    """Published only after out has been written successfully (the caller does this last): a crash between
+    writing the image and this call leaves no manifest, so the next run regenerates rather than trusting a
+    possibly-incomplete publish as current."""
+    _, side = load_geo(image)
+    fp = _export_fingerprint(image, side, _effective_export_options(a, fmt, image))
+    try:
+        out_sig = image_signature(out)
+    except OSError:
+        return                                      # the output vanished right after being written: no manifest
+    d = dict(version=EXPORT_MANIFEST_VERSION, source=os.path.abspath(image), output_signature=out_sig,
+             fingerprint=fp)
+    try:
+        write_json_atomic(_export_manifest_path(out), d, indent=1)
+    except SystemExit:
+        pass                                         # a manifest that cannot be written only costs a fast-skip
+
+
 def output_plan(a):
     """(format, output path), checked before any work: the extension decides the encoder, so it must agree
     with --format, and the output may never be the input image or its sidecar."""
@@ -292,15 +406,38 @@ def output_plan(a):
                          f'use a {EXTENSIONS[a.format][0]} name or drop --format')
     fmt = a.format or from_ext or ts.get('LUNARATLAS_FORMAT')
     tag = '_' + re.sub(r'[^\w.-]+', '_', a.around).strip('_') if a.around else ''    # "Luna 17 / Lunokhod 1" is one name
-    out = a.output or f"{os.path.splitext(a.image)[0]}_atlas{tag}{EXTENSIONS[fmt][0]}"
+    out = a.output
+    if out is None:
+        # a same-stem sibling (moon.tif vs moon.jpg) must not share a default output name (bugs-overview BUG-05's
+        # output-collision note): the full basename, extension included, disambiguates them; an unambiguous
+        # image keeps the familiar short default name
+        folder = os.path.dirname(os.path.abspath(a.image)) or '.'
+        own_stem = os.path.splitext(os.path.basename(a.image))[0].lower()
+        try:
+            ambiguous = any(os.path.splitext(n)[0].lower() == own_stem and
+                            os.path.splitext(n)[1].lower() in IMAGE_EXT and
+                            os.path.abspath(os.path.join(folder, n)) != os.path.abspath(a.image)
+                            for n in os.listdir(folder))
+        except OSError:
+            ambiguous = False
+        name_base = os.path.basename(a.image) if ambiguous else os.path.splitext(os.path.basename(a.image))[0]
+        out = os.path.join(folder, f"{name_base}_atlas{tag}{EXTENSIONS[fmt][0]}")
     if not os.path.isdir(os.path.dirname(os.path.abspath(out))):
         raise SystemExit(f'output folder {os.path.dirname(os.path.abspath(out))} does not exist')
-    for keep in (a.image, sidecar_path(a.image)):
+    for keep in (a.image, sidecar_path(a.image), resolve_sidecar(a.image)[0]):   # a legacy sidecar too
         if os.path.exists(out) and os.path.exists(keep) and os.path.samefile(out, keep):
             raise SystemExit(f'refusing to overwrite {keep}: choose another -o')
     if a.output and os.path.lexists(out) and not getattr(a, 'overwrite', False):
         raise SystemExit(f'{out} already exists: choose another -o, or add --overwrite to replace it '
                          '(the default name IMAGE_atlas….ext is replaced without asking)')
+    if a.output is None and os.path.lexists(out):
+        # the default name is replaced without asking, EXCEPT when it is actually owned by a different source
+        # (an export from before default names were disambiguated, or two images that still collide by chance):
+        # overwriting that one would destroy another photo's export, not refresh this one's own
+        owner = export_owner(out)
+        if owner is not None and os.path.abspath(owner) != os.path.abspath(a.image):
+            raise SystemExit(f'{out} already exists and belongs to a different source image ({owner}); '
+                             'choose -o to pick another name')
     return fmt, out
 
 
@@ -341,6 +478,9 @@ def cmd_export(a):
         raise SystemExit('--max-size must be at least 1 px')
     if not 0 <= a.quality <= 100:
         raise SystemExit('--quality must be 0 to 100')
+    if a.around is not None and not a.around.strip():          # before locating, downloading, or writing output
+        raise SystemExit('--around needs a feature name')      # (bugs-overview BUG-17): a blank one must not
+                                                                 # silently export around whatever feature sorts first
     if a.north_up and a.region:
         raise SystemExit('--north-up shows the whole picture or --around; --region counts pixels of the picture as it was taken')
     fmt, out = output_plan(a)
@@ -375,8 +515,9 @@ def cmd_export(a):
     if isinstance(quality, dict) and quality.get('closeup'):
         # a close-up has no sky to compare brightness with: the Sun's elevation from the capture time decides
         light = sun_elevation_light(a.image, feats)
-    turn = None
+    turn, old_geo, old_feats = None, None, None
     if a.north_up:                                             # after the night side is known: the corners are black
+        old_geo, old_feats = geo, feats                        # kept for transform_edits' moved-label anchors below
         raw, geo, turn = north_up(raw, geo)
         H, W = raw.shape[:2]
         feats = project(feats, geo)
@@ -408,8 +549,6 @@ def cmd_export(a):
     vw = (x0, y0, (ow / sw, oh / sh), ow, oh)
     edits = (load_geo(a.image)[1] or {}).get('edits')
     edits = edits if isinstance(edits, dict) else {}
-    if turn is not None:
-        edits = transform_edits(edits, *turn)
     style = edits.get('style')
     style_font = style.get('font') if isinstance(style, dict) else None
     from_sidecar = not a.font and isinstance(style_font, str)        # someone else's sidecar must not start a download
@@ -423,6 +562,22 @@ def cmd_export(a):
         a.font = DEFAULT_FONT
         fonts = Fonts(a.font, log)
     families = {a.font: fonts}
+    if turn is not None:
+        # moved labels: resolve each one's absolute on-screen position under the SAME fonts/min-size/font-scale/
+        # layers this export actually uses, before and after the turn, so the stored {dx, dy} is transformed as
+        # the point it represents rather than rotated in place (bugs-overview BUG-10)
+        old_by_name = {f['name']: f for f in old_feats}
+        new_by_name = {f['name']: f for f in feats}
+        anchors = {}
+        for name, v in (edits.get('labels') or {}).items():
+            if not (isinstance(v, dict) and 'dx' in v):
+                continue
+            of, nf = old_by_name.get(name), new_by_name.get(name)
+            if of is None or nf is None:
+                continue
+            anchors[name] = (label_anchor(of, old_geo, fonts, a.min_size, a.font_scale, layers, a.rims),
+                             label_anchor(nf, geo, fonts, a.min_size, a.font_scale, layers, a.rims))
+        edits = transform_edits(edits, *turn, anchors=anchors)
 
     def fonts_for(family):
         family = family or a.font
@@ -474,20 +629,19 @@ def cmd_export(a):
         if not cv2.imwrite(tmp, img, params):
             raise OSError('the image encoder refused it')
     write_atomic(out, write)
+    write_export_manifest(a.image, out, a, fmt)    # published only now: a crash before this leaves no fresh record
     log(f'wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)')
 
 
-IMAGE_EXT = ('.tif', '.tiff', '.png', '.jpg', '.jpeg')
-
-
 def batch_images(folder, recursive=False):
-    """The photos in a folder, in name order: no hidden files, none of LunarAtlas's own exports (IMAGE_atlas….ext)."""
+    """The photos in a folder, in name order: no hidden files, none of LunarAtlas's own exports (IMAGE_atlas….ext,
+    shared with the launcher's recent-photos list as atlas_paths.is_export_name -- bugs-overview BUG-13)."""
     out = []
     for root, dirs, files in os.walk(folder):
         dirs[:] = sorted(d for d in dirs if recursive and not d.startswith('.'))
         for n in sorted(files):
-            stem, ext = os.path.splitext(n)
-            if ext.lower() in IMAGE_EXT and not n.startswith('.') and not re.search(r'_atlas(_|$)', stem):
+            ext = os.path.splitext(n)[1]
+            if ext.lower() in IMAGE_EXT and not n.startswith('.') and not is_export_name(n):
                 out.append(os.path.join(root, n))
     return out
 
@@ -508,14 +662,23 @@ def cmd_batch(a):
         one = copy.copy(a)                            # cmd_export fills in a.font from the photo's own edits
         one.image, one.output = image, None
         try:
-            fmt, out = output_plan(one)
-            if a.skip_existing and os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(image):
-                results.append((name, 'skipped', f'{os.path.basename(out)} is already there', 0.0))
-                continue
             if a.locate_only:
+                # bugs-overview BUG-11 item 5: --skip-existing here must consult the image's OWN positioning,
+                # never an export file (there may not even be one) -- an unrelated export's mtime says nothing
+                # about whether this image still needs locating
+                if a.skip_existing and load_geo(image)[0] is not None:
+                    results.append((name, 'skipped', 'already positioned', 0.0))
+                    continue
                 geometry(image, force=a.force)
                 results.append((name, 'located', '', time.perf_counter() - t0))
             else:
+                fmt, out = output_plan(one)
+                # bugs-overview BUG-11: a published manifest, not an mtime guess -- a saved drawing, a changed
+                # font/night/scale/region, or a changed source signature all correctly invalidate it, and a
+                # failed or interrupted export (no manifest published) is never mistaken for current
+                if a.skip_existing and export_is_current(image, out, one, fmt):
+                    results.append((name, 'skipped', f'{os.path.basename(out)} is already current', 0.0))
+                    continue
                 cmd_export(one)
                 results.append((name, 'exported', os.path.basename(out), time.perf_counter() - t0))
         except SystemExit as e:

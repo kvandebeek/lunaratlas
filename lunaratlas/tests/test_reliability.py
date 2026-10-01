@@ -84,23 +84,68 @@ class Downloads(S.TempDir, unittest.TestCase):
         self.assertEqual(os.listdir(self.tmp), [])
 
     def test_broken_connection_leaves_nothing(self):
+        """BUG-08: a connection reset mid-transfer used to escape download() as a raw ConnectionResetError
+        instead of the clear SystemExit every other download failure here already becomes."""
         with mock.patch.object(urllib.request, 'urlopen', return_value=FakeResponse(b'x' * 5_000_000, fail_after=2 << 20)):
-            with self.assertRaises(ConnectionResetError):
+            with self.assertRaises(SystemExit) as cm:
                 ag.download('https://pds.lroc.im-ldi.com/f', self.dest(), lambda p: True)
+        self.assertIn('could not download', str(cm.exception))
         self.assertEqual(os.listdir(self.tmp), [])
 
     def test_failed_redownload_keeps_the_old_copy(self):
+        """BUG-08: offline/DNS/timeout errors used to escape as a raw OSError; the temporary-file cleanup and the
+        untouched existing destination (the two things that matter here) are unaffected by converting it."""
         with open(self.dest(), 'wb') as fh:
             fh.write(b'old')
         with mock.patch.object(urllib.request, 'urlopen', side_effect=OSError('offline')):
-            with self.assertRaises(OSError):
+            with self.assertRaises(SystemExit) as cm:
                 ag.download('https://pds.lroc.im-ldi.com/f', self.dest(), lambda p: True)
+        self.assertIn('could not download', str(cm.exception))
         with open(self.dest(), 'rb') as fh:
             self.assertEqual(fh.read(), b'old')
+        self.assertEqual(os.listdir(self.tmp), ['file.bin'], 'no temporary file left behind')
 
     def test_the_tests_never_reach_the_network(self):
         with self.assertRaises(OSError):
             urllib.request.urlopen('https://api.github.com/', timeout=1)
+
+    def test_a_disallowed_scheme_or_host_stays_its_own_refusal_not_a_generic_network_message(self):
+        """A download() call on a URL https_check() refuses (wrong scheme, or a host not in DOWNLOAD_HOSTS) is a
+        configuration/security refusal, never attempted over the network -- it must keep raising URLError with
+        its own 'refusing ...' message, not get folded into the BUG-08 fix's generic SystemExit."""
+        for url in ('http://pds.lroc.im-ldi.com/f', 'https://evil.example/f'):
+            with self.subTest(url):
+                with self.assertRaises(urllib.error.URLError) as cm:
+                    ag.download(url, self.dest(), lambda p: True)
+                self.assertIn('refusing', str(cm.exception))
+
+class LocateFailureClassification(S.TempDir, unittest.TestCase):
+    """bugs-overview BUG-02: geometry() used to catch every SystemExit from locate() as "no usable limb" and
+    fall back to a close-up search. A download failure building the reference map (or any other fatal error
+    inside locate()) must terminate the command instead of triggering that blind, expensive fallback."""
+
+    def test_a_download_failure_inside_locate_is_not_mistaken_for_no_limb(self):
+        img, geo = S.moon_image(self.tmp)
+        os.remove(ag.sidecar_path(img))                     # a fresh image: geometry() must actually call locate()
+        def boom(self_, log=print):
+            raise SystemExit('could not download https://pds.lroc.im-ldi.com/x (offline); check the network and try again')
+        with mock.patch.object(ag.Reference, '__init__', boom), \
+             mock.patch('atlas_closeup.locate_closeup', side_effect=AssertionError('must not be called')) as cu:
+            with self.assertRaises(SystemExit) as cm:
+                ma.geometry(img, relocate=True)
+        self.assertIn('could not download', str(cm.exception))
+        self.assertFalse(cu.called, 'no close-up fallback for a download failure')
+
+    def test_a_genuinely_unusable_limb_still_falls_back_to_a_close_up(self):
+        """The recoverable case this packet must keep working: no limb, but a capture time is available."""
+        img = os.path.join(self.tmp, '2026-01-01-0000_0-crop.tif')
+        cv2.imwrite(img, np.full((200, 200), 40, np.uint8))     # too little contrast: fit_limb finds nothing
+        with mock.patch('atlas_closeup.locate_closeup') as cu:
+            cu.side_effect = SystemExit('close-up: stop here, do not actually search')
+            with self.assertRaises(SystemExit) as cm:
+                ma.geometry(img, relocate=True, gate=False)
+        self.assertTrue(cu.called, 'a genuinely unusable limb with a capture time still tries a close-up')
+        self.assertIn('stop here', str(cm.exception))
 
 
 class DamagedSidecars(S.TempDir, unittest.TestCase):
@@ -414,6 +459,61 @@ class ConcurrentEdits(S.TempDir, unittest.TestCase):
         self.assertIsNotNone(geo)
         self.assertEqual(len(d['edits']['shapes']), 1)
         self.assertFalse([f for f in os.listdir(self.tmp) if '.part' in f])
+
+    def test_session_restart_does_not_reset_the_durable_revision_to_zero(self):
+        """BUG-14: Session.rev used to start at 0 on every (re)build, so a pending browser snapshot saved under a
+        real, higher revision could look newer than the freshly reset server and be replayed, rolling back a
+        write that had already landed. The session now seeds its revision from the sidecar's own durable value."""
+        import atlas_view as av
+        img = os.path.join(self.tmp, 'a.tif')
+        cv2.imwrite(img, np.zeros((10, 10), np.uint8))
+        geo, _ = S.locate_as(img, S.truth_geometry()), None
+        side = S.sidecar(img)
+        lock = threading.Lock()
+        ok, edits, committed = av.write_edits(img, dict(hidden=['real']), lock, 5000)
+        self.assertTrue(ok)
+        self.assertEqual(committed, 5000)
+        # a fresh Session for the same image (as a restarted viewer process would build) must see the durable
+        # revision, not 0 -- so a replayed pending snapshot older than 5000 is correctly refused as stale
+        s2 = av.Session.__new__(av.Session)
+        _, d = ag.resolve_sidecar(img)
+        s2_rev = av.edits_rev(d) if isinstance(d, dict) else 0
+        self.assertEqual(s2_rev, 5000, 'a new session reads the durable revision, not zero')
+        ok2, _, committed2 = av.write_edits(img, dict(hidden=['stale replay']), lock, 100)
+        self.assertFalse(ok2, 'a pending snapshot older than the durable revision is rejected, not replayed')
+        self.assertEqual(committed2, 5000)
+        self.assertEqual(S.sidecar(img)['edits']['hidden'], ['real'], 'the real edit was never rolled back')
+
+    def test_write_edits_and_save_geo_share_the_cross_process_lock(self):
+        """A relocate (save_geo, as a separate `lunaratlas.py locate` subprocess would run it) and an edit save
+        (write_edits, as the viewer server runs it) must never interleave their read-modify-write of one sidecar,
+        even though they are different functions with no Python-level lock in common other than the file lock."""
+        import atlas_view as av
+        img = os.path.join(self.tmp, 'a.tif')
+        cv2.imwrite(img, np.zeros((10, 10), np.uint8))
+        S.locate_as(img, S.truth_geometry())
+        lock, errors, iterations = threading.Lock(), [], 25
+
+        def relocator():
+            try:
+                for i in range(iterations):
+                    ag.save_geo(img, S.truth_geometry(theta=float(i)), {}, 10, 10)
+            except Exception as e:                         # noqa: BLE001
+                errors.append(e)
+
+        def editor():
+            try:
+                for i in range(iterations):
+                    av.write_edits(img, dict(hidden=[f'h{i}']), lock)
+            except Exception as e:                         # noqa: BLE001
+                errors.append(e)
+        ts = [threading.Thread(target=relocator), threading.Thread(target=editor)]
+        for t in ts: t.start()
+        for t in ts: t.join(60)
+        self.assertEqual(errors, [])
+        geo, d = ag.load_geo(img)
+        self.assertIsNotNone(geo, d)                        # never a damaged/partial sidecar from an interleaved write
+        self.assertIn('edits', d)
 
 
 if __name__ == '__main__':

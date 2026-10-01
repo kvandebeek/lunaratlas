@@ -8,6 +8,30 @@ let file = null, path = null, t0 = 0, timer = null, xhr = null, lastForce = fals
 
 function mb(n) { return n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : (n / 1e6).toFixed(1) + ' MB'; }
 
+// ------------------------------------------------------------ the photo being worked on
+// The server's own thumbnail, the moment there is a path to ask for: it reads TIFF, which no browser does, and it is
+// already cached from the earlier-photos list.  Before the upload has answered there is no path yet, so a small
+// JPEG or PNG is shown from the browser's own copy instead; a big one would cost the renderer hundreds of megabytes
+// to decode for a 56 px square, and browsers cannot decode a TIFF at all.
+const PREVIEW_MAX = 20 << 20;
+let thumbURL = null, thumbSrc = '', thumbBad = '';
+function showPhoto() {
+  const box = $('#wthumb'), img = $('#wimg');
+  const local = !path && file && /\.(jpe?g|png)$/i.test(file.name) && file.size <= PREVIEW_MAX;
+  const src = path ? '/app/thumb?path=' + encodeURIComponent(path)
+    : local ? (thumbURL = thumbURL || URL.createObjectURL(file)) : '';
+  if (thumbURL && !local) { URL.revokeObjectURL(thumbURL); thumbURL = null; }
+  $('#wname').textContent = file ? file.name : path ? path.split(/[\\/]/).pop() : '';
+  if (!src || src === thumbBad) { box.hidden = true; return; }   // nothing to show, or this one could not be made
+  if (src !== thumbSrc) {
+    thumbSrc = src;
+    img.alt = '';                                                 // the name beside it says which photo this is
+    img.onerror = () => { thumbBad = src; box.hidden = true; };   // a photo that cannot be shown leaves no empty frame
+    img.src = src;
+  }
+  box.hidden = false;
+}
+
 // ------------------------------------------------------------ stages
 // the bar is split over the stages; "Downloading Moon maps" only gets room once a download starts (first run)
 const STAGES = [
@@ -119,6 +143,9 @@ async function prefillTime(f) {
 
 function reset() {
   file = null; path = null; clearInterval(timer);
+  thumbURL && URL.revokeObjectURL(thumbURL);
+  thumbURL = null; thumbSrc = ''; thumbBad = '';
+  showPhoto();
   $('#file').value = ''; $('#when').value = ''; show('#whenfrom', false);
   show('#pick'); show('#details', false); show('#work', false);
   loadRecent();
@@ -132,6 +159,7 @@ function working(title) {
   $('#stop').disabled = false;
   $('#log').textContent = '';
   resetStages(); st.since = Date.now();
+  showPhoto();                       // the photo this run is about, from the file or from the path we have
   t0 = Date.now();
 }
 
@@ -191,6 +219,7 @@ function start(url, extra) {                 // from the list of earlier photos
 function begin(url, extra) {
   lastForce = !!(extra && extra.force);
   if (url === '/app/open') { toStage(5); $('#wtitle').textContent = 'Opening'; }
+  showPhoto();                       // the upload has answered: the server's own thumbnail takes over from the file's
   renderStages();
   post(url, Object.assign({ path }, extra)).then(poll).catch((e) => fail(e.message));
 }

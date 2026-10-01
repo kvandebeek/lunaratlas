@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import socket
 import sys
 import threading
 import time
@@ -29,15 +30,21 @@ from urllib.parse import parse_qs, unquote, urlencode
 import cv2
 import numpy as np
 
-from atlas_geo import R_MOON, image_signature, load_geo, sidecar_path, write_json_atomic
+from atlas_geo import (DATA, PPD, R_MOON, Reference, image_signature, load_geo, resolve_sidecar, sidecar_path,
+                       sky_to_latlon, unit, write_json_atomic)
 from atlas_names import load_features
-from atlas_paths import CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, private_dir, self_command, temp_beside, user_dir
+from atlas_paths import (CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, file_lock, private_dir, self_command,
+                         temp_beside, user_dir)
 from atlas_render import BUNDLED, FONT_DIR, Fonts, clean_label_override, clean_shapes, light_levels, rim_polygons
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, 'viewer')
 CACHE = os.path.join(CACHE_ROOT, 'tiles')
 TILE = 512
+TILE_RENDER_VERSION = 2   # bump whenever build_tiles()'s own pixel processing changes (bugs-overview BUG-18: an
+                          # unchanged image signature alone cannot tell an old, too-dark pyramid apart from a
+                          # correct one) -- this invalidates both the on-disk pyramid and every browser-cached
+                          # tile URL, independent of the edit/session revision tracked elsewhere
 VIEWER_FONTS = BUNDLED                          # shipped with the app: the viewer never waits for a download
 EDITS_SCHEMA = 'lunaratlas.edits/1'
 MAX_JSON = 16 << 20                             # the biggest request body the page can send (the edits: 5000 shapes)
@@ -51,8 +58,11 @@ def tile_dir(image):
 
 
 def cache_size(path):
-    """Bytes below path; a disappearing cache entry is simply counted as zero."""
+    """Bytes of a cache entry: the file's own size, or the total below a folder. A thumbnail is a single file, so
+    os.walk() alone would count it as zero and the limit would never be enforced. A disappearing entry counts as zero."""
     try:
+        if not os.path.isdir(path):
+            return os.path.getsize(path)
         return sum(os.path.getsize(os.path.join(root, f)) for root, _, files in os.walk(path) for f in files)
     except OSError:
         return 0
@@ -109,7 +119,8 @@ def tile_version(image):
     """Part of every tile URL. The page caches tiles for a day by URL, so each image, and each change to it, needs URLs
     of its own: with bare /tiles/L/C_R.jpg the app window showed tiles of the photo opened before."""
     sig = image_signature(image)
-    return hashlib.sha1(f"{os.path.abspath(image)}|{sig['size_bytes']}|{sig['mtime']}".encode()).hexdigest()[:12]
+    return hashlib.sha1(f"{os.path.abspath(image)}|{sig['size_bytes']}|{sig['mtime']}|{TILE_RENDER_VERSION}"
+                        .encode()).hexdigest()[:12]
 
 
 def as_loader(raw, image):
@@ -160,7 +171,8 @@ def build_tiles(image, load_raw, log):
     try:
         with open(meta_p) as fh:
             meta = json.load(fh)
-        if meta.get('signature') == sig and meta.get('tile') == TILE and tiles_complete(d, meta.get('levels')):
+        if (meta.get('signature') == sig and meta.get('tile') == TILE and
+                meta.get('render') == TILE_RENDER_VERSION and tiles_complete(d, meta.get('levels'))):
             os.utime(d, None)                       # LRU recency for cache eviction
             log(f'tiles from the cache ({len(meta["levels"])} levels)')
             return meta['levels']
@@ -181,8 +193,21 @@ def build_tiles(image, load_raw, log):
     del raw                                        # converting it to 3 channels first only triples the memory and
                                                     # the JPEG size for tiles that would look identical either way
     if g.dtype != np.uint8:               # display stretch only (exports keep the original tonality)
-        white = float(np.percentile(g[::7, ::7], 99.95))
-        g = cv2.convertScaleAbs(g, alpha=250.0 / max(white, 1))
+        # bugs-overview BUG-18: `max(white, 1)` meant a valid 0-1 float image with a dim white point (e.g. 0.3)
+        # was stretched as if white were 1, leaving it far too dark (alpha 250 instead of ~833); a NaN anywhere
+        # in the sample poisoned the whole percentile. The white point is now taken from finite samples only,
+        # and used as-is whenever it is positive, whatever its scale (0-1 float, raw 16-bit, or anything else).
+        sample = g[::7, ::7]
+        finite = sample[np.isfinite(sample)]
+        white = float(np.percentile(finite, 99.95)) if finite.size else 0.0
+        if not math.isfinite(white) or white <= 0:
+            white = 0.0                                    # all-invalid or all-zero/negative: black, no warning
+        # convertScaleAbs takes the absolute value, which would turn a negative sample bright; NaN/Inf pixels
+        # (not just the sample above) are mapped to black rather than reaching the encoder unsanitized. g owns
+        # its own buffer here (raw was already deleted above), so this is the only copy made, not an extra one.
+        np.nan_to_num(g, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        np.clip(g, 0, None, out=g)
+        g = cv2.convertScaleAbs(g, alpha=(250.0 / white if white > 0 else 0.0))
     levels, lvl = [], 0
     t0 = time.perf_counter()
     with ThreadPoolExecutor(8) as ex:
@@ -206,7 +231,8 @@ def build_tiles(image, load_raw, log):
                 break
             g = cv2.resize(g, ((w + 1) // 2, (h + 1) // 2), interpolation=cv2.INTER_AREA)
             lvl += 1
-    write_json_atomic(meta_p, dict(signature=sig, tile=TILE, levels=levels, image=os.path.abspath(image)))
+    write_json_atomic(meta_p, dict(signature=sig, tile=TILE, render=TILE_RENDER_VERSION, levels=levels,
+                                   image=os.path.abspath(image)))
     evict_cache(keep=(d,))
     log(f'tiles built: {len(levels)} levels, {sum(l["cols"] * l["rows"] for l in levels)} tiles, {time.perf_counter() - t0:.1f} s')
     return levels
@@ -243,7 +269,22 @@ def graticule(geo):
     return lines
 
 
-LIGHT_VERSION = 1
+LIGHT_VERSION = 2       # bumped: the cache key now fingerprints the feature list itself, not just its length
+
+
+def valid_light(light, feats):
+    """A finite 1-D array with exactly one value per feats, or None (meaning "unknown": rendering already treats
+    None as "do not dim anything", which is also the right default for a feature whose lighting could not be
+    determined -- bugs-overview BUG-06/BUG-07). Never raises; never returns an array of the wrong shape for feats."""
+    if light is None:
+        return None
+    try:
+        a = np.asarray(light, float)
+    except (TypeError, ValueError):
+        return None
+    if a.ndim != 1 or len(a) != len(feats) or not np.all(np.isfinite(a)):
+        return None
+    return a
 
 
 def night_side(image, load_raw, geo, side, feats, xy, log):
@@ -252,14 +293,19 @@ def night_side(image, load_raw, geo, side, feats, xy, log):
     load_raw = as_loader(load_raw, image)
     closeup = bool((side.get('quality') or {}).get('closeup'))
     sig = image_signature(image)
+    # the ordered feature identities, not just their count: two catalogues of the same length in a different
+    # order (or a different one entirely) must not reuse each other's cached lighting (bugs-overview BUG-07)
+    fp = [(f.get('name'), round(f.get('lat', 0.0), 6), round(f.get('lon', 0.0), 6)) for f in feats]
     key = hashlib.sha1(json.dumps([LIGHT_VERSION, sig, geo.as_dict(), closeup, (side.get('quality') or {}).get('capture_utc'),
-                                   len(feats)], sort_keys=True, default=str).encode()).hexdigest()
+                                   fp], sort_keys=True, default=str).encode()).hexdigest()
     p = os.path.join(tile_dir(image), 'light.json')
     try:
         with open(p) as fh:
             c = json.load(fh)
-        if c.get('key') == key and len(c.get('light', ())) == len(feats):
-            return np.array(c['light'], float)
+        if c.get('key') == key:
+            cached = valid_light(c.get('light'), feats)
+            if cached is not None:
+                return cached
     except (OSError, ValueError, TypeError, AttributeError):
         pass
     if closeup:
@@ -267,12 +313,70 @@ def night_side(image, load_raw, geo, side, feats, xy, log):
         light = sun_elevation_light(image, feats)
     else:
         light = light_levels(load_raw(), geo, feats, xy)
-    light = np.asarray(light, float)
+    # unknown/malformed lighting (no usable capture time for a close-up, or anything else producing a value that
+    # does not fit feats) keeps every label visible as if lit, rather than crashing building light.json or
+    # silently misassociating values with the wrong features once rendered (bugs-overview BUG-06/BUG-07)
+    light = valid_light(light, feats)
+    if light is None:
+        return None
     try:
         write_json_atomic(p, dict(key=key, light=[float(v) for v in light]))
     except SystemExit:
         log('could not keep the night side beside the tiles')
     return light
+
+
+DISK_PX = 640            # the whole Moon the viewer draws behind a close-up: big enough to read maria and the terminator
+
+
+def moon_disk(geo, sun=None, px=DISK_PX):
+    """The whole Moon as this image's geometry sees it, as a grayscale array on black (space): the LROC WAC
+    albedo, shaded Lommel-Seeliger by the terminator when the capture time gives a Sun, so a close-up can be
+    zoomed out onto a real globe instead of an empty wireframe. None when the albedo map is not cached yet —
+    the viewer must never download 44 MB just to draw a background."""
+    p = os.path.join(DATA, 'wac_emp_643_nearside.png')
+    try:
+        ref = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+    except Exception:                                        # noqa: BLE001  (a damaged map is just no background)
+        ref = None
+    if ref is None or ref.shape != Reference.SHAPE:
+        return None
+    n = int(px)
+    half = n / 2 - 1
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float64)
+    # the sky plane about the sub-observer point: x east, y north, one unit = the Moon's radius
+    sx, sy = (xx - (n - 1) / 2) / half, -((yy - (n - 1) / 2) / half)
+    lat, lon, ok = sky_to_latlon(sx, sy, geo.lat0, geo.lon0, geo.dist)
+    lat = np.where(ok, lat, 0.0)
+    lon = np.where(ok, lon, 0.0)
+    surf = np.stack([np.cos(np.radians(lat)) * np.cos(np.radians(lon)),
+                     np.cos(np.radians(lat)) * np.sin(np.radians(lon)),
+                     np.sin(np.radians(lat))], -1)
+    e = unit(geo.lat0, geo.lon0)
+    mu = np.clip(surf @ e, 0.05, None)                         # emission: clamp so the limb cannot blow up
+    if sun is None:                                           # no capture time: a full, evenly lit disk
+        mu0 = np.ones_like(mu)
+    else:
+        mu0 = np.clip(surf @ unit(*sun), 0, None)              # incidence
+    shade = mu0 / (mu0 + mu)                                  # Lommel-Seeliger: the flat full disk's classic falloff
+    mx = ((lon + 90.0) * PPD).astype(np.float32)
+    my = ((60.0 - lat) * PPD).astype(np.float32)
+    a = cv2.remap(ref, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    # The near-side map covers only +-60 deg of latitude and +-90 of longitude; a hard cut to a flat grey would
+    # draw a visible straight seam and a notch across the north of the disk. Fade the map into neutral highlands
+    # over the last few degrees instead, so the limb still reads as a smooth sphere.
+    edge = np.minimum(59.5 - np.abs(lat), 89.5 - np.abs(lon))
+    w = np.clip(edge / 4.0, 0.0, 1.0)
+    maria = 0.28 + 0.72 * (a / 255.0)
+    bright = w * maria + (1.0 - w) * 0.55
+    img = np.where(ok & (surf @ e > 0), shade * bright, 0.0)    # off the limb is space: black
+    return np.clip(img * 255.0, 0, 255).astype(np.uint8)
+
+
+def disk_png_bytes(disk, px=DISK_PX):
+    """The rendered disk as a PNG, for the page's <img> (grayscale, so it is a small file)."""
+    ok, buf = cv2.imencode('.png', disk, [cv2.IMWRITE_PNG_COMPRESSION, 6])
+    return buf.tobytes() if ok else None
 
 
 def page_data(image, load_raw, geo, side, levels, log):
@@ -284,6 +388,8 @@ def page_data(image, load_raw, geo, side, levels, log):
     lat = np.array([f['lat'] for f in feats]); lon = np.array([f['lon'] for f in feats])
     x, y, z = geo.to_image(lat, lon)
     light = night_side(image, load_raw, geo, side, feats, np.stack([x, y], 1), log)
+    if light is None:          # unknown lighting (bugs-overview BUG-06): every feature is treated as fully lit,
+        light = np.ones(len(feats))   # the same "do not dim anything" meaning layout()'s own light=None already has
     visible = [(f, a, b, c, li) for f, a, b, c, li in zip(feats, x, y, z, light)
                if c >= 0.05 and -0.05 * W < a < 1.05 * W and -0.05 * H < b < 1.05 * H]
     rim_i = [i for i, (f, *_rest) in enumerate(visible) if f['cls'] in ('crater', 'lettered', 'apollo') and f['diam'] > 0]
@@ -308,7 +414,9 @@ def page_data(image, load_raw, geo, side, levels, log):
     return dict(image=os.path.basename(image), sky=sky_text(when) if when else None, width=W, height=H, tile=TILE, levels=levels, tiles_v=tile_version(image),
                 geometry=geo.as_dict(), radius_px=geo.radius_px, km_per_px=geo.km_per_px, R_moon=R_MOON,
                 quality=side.get('quality', {}), gate=(side.get('quality_gate') or {}).get('line'),
+                globe=2 * geo.radius_px > 1.15 * max(W, H),      # a close-up: the Moon is far bigger than the
                 features=rows, grid=graticule(geo), fonts=[f for f in VIEWER_FONTS if font_files(f)])
+                # frame, so there is a real globe to zoom out onto (see Session.disk)
 
 
 # ---------------------------------------------------------------- fonts
@@ -347,12 +455,8 @@ def fonts_css_cached():
 
 # ---------------------------------------------------------------- edits
 def read_edits(image):
-    try:
-        with open(sidecar_path(image)) as fh:
-            d = json.load(fh)
-    except (OSError, ValueError):
-        return {}
-    e = d.get('edits') if isinstance(d, dict) else None
+    _, d = resolve_sidecar(image)
+    e = d.get('edits') if isinstance(d, dict) and 'problem' not in d else None
     return e if isinstance(e, dict) else {}
 
 
@@ -374,23 +478,44 @@ def clean_edits(e):
     return out
 
 
-def write_edits(image, e, lock):
-    """The sidecar with the viewer's edits. A sidecar that has gone or turned to something else is never a
-    traceback: the edits are dropped with a message the page shows, and the geometry is left alone."""
-    p = sidecar_path(image)
-    with lock:
-        try:
-            with open(p) as fh:
-                d = json.load(fh)
-        except (OSError, ValueError) as ex:
-            raise ValueError(f'cannot read {os.path.basename(p)} ({ex.__class__.__name__}): '
-                             'locate the image again before editing it') from None
-        if not isinstance(d, dict):
-            raise ValueError(f'{os.path.basename(p)} is not a JSON object: locate the image again before editing it')
+def edits_rev(d):
+    """The sidecar's own last-committed edit revision (0 if it has none), the durable cross-process authority for
+    BUG-04/BUG-14: unlike an in-memory Session.rev, this survives a server restart and is visible to every process
+    that opens the same sidecar. Kept as a sidecar-level key sibling to 'edits' (not inside it), the same way 'rev'
+    was already kept out of the 'edits' object the page sends and receives, so the wire format the page and the
+    existing tests rely on is unchanged: '/edits' returns the edits content with 'rev' as its own top-level field,
+    never nested in the content old sidecars already parse."""
+    r = d.get('edits_rev') if isinstance(d, dict) else None
+    return r if isinstance(r, (int, float)) and not isinstance(r, bool) and math.isfinite(r) else 0
+
+
+def write_edits(image, e, lock, rev=None):
+    """(committed, edits, committed_rev). The sidecar with the viewer's edits, written only if rev is not behind
+    the sidecar's own durable revision -- the read of that revision, the comparison, and the write are one
+    operation under one lock (process-local `lock` plus the cross-process file_lock), closing the gap where the
+    old code checked and advanced an in-memory revision, released the lock, and only then reacquired it to write
+    (bugs-overview BUG-04). rev=None (no usable revision on the request) writes unconditionally without advancing
+    the durable counter, matching a page that sends no revision at all.
+
+    A sidecar that has gone or turned to something else is never a traceback: the edits are dropped with a message
+    the page shows, and the geometry is left alone. A validated legacy sidecar is migrated to the canonical
+    per-extension path on this write (bugs-overview BUG-05); the legacy file itself is left in place."""
+    canonical = sidecar_path(image)
+    with lock, file_lock(canonical):
+        _, d = resolve_sidecar(image)
+        if d is None or 'problem' in d:
+            reason = d['problem'] if isinstance(d, dict) and 'problem' in d else 'no sidecar'
+            raise ValueError(f'cannot read a sidecar for {os.path.basename(image)} ({reason}): '
+                             'locate the image again before editing it')
+        current = edits_rev(d)
+        if rev is not None and rev < current:
+            return False, d.get('edits') if isinstance(d.get('edits'), dict) else {}, current
+        new_rev = current if rev is None else rev
         d['edits'] = clean_edits(e)
         d['edits']['saved'] = time.strftime('%Y-%m-%d %H:%M:%S')
-        write_json_atomic(p, d, indent=1)
-    return d['edits']
+        d['edits_rev'] = new_rev
+        write_json_atomic(canonical, d, indent=1)
+        return True, d['edits'], new_rev
 
 
 # ---------------------------------------------------------------- export jobs
@@ -416,6 +541,14 @@ class ExportJob:
         code = self.proc.wait()
         if code == 0 and os.path.exists(self.output):
             self.state = 'done'
+        elif code == 0:
+            # the command exited cleanly but never wrote its result: a real but confusing case (not a message to
+            # surface the last printed line for, which usually reads as a success -- e.g. "saved NAME.atlas.json" --
+            # and would make a genuine problem look like nonsense on the page)
+            self.state = 'failed'
+            name = os.path.basename(self.output[:-len('.atlas.json')]) if self.output.endswith('.atlas.json') \
+                else os.path.basename(self.output)
+            self.error = f'{name} finished without saving its result'
         else:
             self.state = 'failed'
             self.error = self.lines[-1] if self.lines else f'exit code {code}'
@@ -451,16 +584,31 @@ def export_command(image, o):
         args += ['--scale', '0.5']
     elif o.get('scale') == 'max':
         args += ['--max-size', str(max(1, int(float(o.get('max_size', 4096)))))]
+    else:
+        # "Full size" chosen explicitly: unlike the environment/.env default, '--max-size' on the command line has
+        # no "uncapped" sentinel (0 fails cmd_export's own "--max-size must be at least 1 px" check), so a large
+        # value within tool_settings' own LUNARATLAS_MAX_SIZE range (0-100000) is sent instead -- bigger than any
+        # real capture, so it never actually caps, but it does override a nonzero environment/.env value that
+        # would otherwise silently shrink an export the dialog says is full size (bugs-overview BUG-01)
+        args += ['--max-size', '100000']
+    # Every one of these is a choice the dialog makes explicitly, with its own default (bugs-overview BUG-01): an
+    # export must carry out that choice as given, not fall back onto whatever the environment/.env happens to say
+    # for the same-named CLI flag whenever the dialog's own default happens to match the CLI's. Both polarities of
+    # every boolean are emitted, '--night' is always emitted from a whitelist (never omitted for 'hide', which is
+    # the dialog's own default but not the CLI's), and '--lettered'/'--landing' are derived from the layer list and
+    # sent explicitly so the CLI's own --lettered/--landing switches (driven by the environment too) cannot
+    # re-discard a layer the dialog's list included.
     layers = [l for l in o.get('layers', []) if l in ('area', 'crater', 'lettered', 'relief', 'landing')]
     if not o.get('names', True) or not layers:
         args += ['--layers', 'none']
-    elif len(layers) < 5:
+    else:
         args += ['--layers', ','.join(layers)]
-    for flag, key in (('--no-rims', 'rims'), ('--no-grid', 'grid'), ('--no-drawings', 'drawings'), ('--no-info', 'info')):
-        if not o.get(key, True):
-            args.append(flag)
-    if o.get('night') in ('dim', 'show'):
-        args += ['--night', o['night']]
+    args.append('--lettered' if 'lettered' in layers else '--no-lettered')
+    args.append('--landing' if 'landing' in layers else '--no-landing')
+    for on, off, key in (('--rims', '--no-rims', 'rims'), ('--grid', '--no-grid', 'grid'),
+                         ('--drawings', '--no-drawings', 'drawings'), ('--info', '--no-info', 'info')):
+        args.append(on if o.get(key, True) else off)
+    args += ['--night', o['night'] if o.get('night') in ('hide', 'dim', 'show') else 'hide']
     for flag, key, lo, hi in (('--min-size', 'min_px', 4, 400), ('--font-scale', 'font_scale', 0.3, 5)):
         if o.get(key) is not None:
             args += [flag, str(min(hi, max(lo, float(o[key]))))]
@@ -499,8 +647,26 @@ class Session:
         self.data = page_data(image, load_raw, geo, side, levels, log)
         self._json: dict[bool, bytes] = {}
         self.tiles = tile_dir(image)
+        # The whole Moon behind a close-up, drawn from the cached LROC albedo and shaded by the terminator.
+        # Only for a close-up (the disk larger than the photo): for a full-disk photo the tiles ARE the Moon.
+        # Absent when the albedo map is not cached, and never downloaded here.
+        self.disk = None
+        if self.data.get('globe'):
+            from atlas_ephem import capture_time as _taken_at, ephemeris
+            _t = _taken_at(image)
+            _sun = None
+            if _t is not None:
+                try:
+                    _e = ephemeris(_t)
+                    _sun = (_e['sub_sun_lat'], _e['sub_sun_lon'])
+                except (ValueError, TypeError, ArithmeticError):
+                    _sun = None
+            _d = moon_disk(geo, _sun)
+            self.disk = disk_png_bytes(_d) if _d is not None else None
         self.lock = threading.Lock()
-        self.rev = 0                                # the newest revision of the edits the page has sent
+        _, _side = resolve_sidecar(image)           # seed from the durable sidecar revision, not 0: a server
+        self.rev = edits_rev(_side) if isinstance(_side, dict) else 0   # restart must not look older than a
+                                                     # pending browser snapshot that the sidecar already has (BUG-14)
         self.job: ExportJob | None = None
         self.sid = self.data['tiles_v']             # identifies this open image (and its version) to the page: a
                                                      # page that still shows a previous session's image must not
@@ -536,7 +702,17 @@ class Server(ThreadingHTTPServer):
 
     def server_bind(self):
         """As HTTPServer's, without its socket.getfqdn('127.0.0.1'): a reverse lookup that can wait half a minute
-        for an mDNS timeout before the page is served."""
+        for an mDNS timeout before the page is served.
+
+        On Windows, SO_REUSEADDR (inherited from HTTPServer as allow_reuse_address=True) has weaker semantics
+        than on POSIX: it can let a second process bind the SAME port while the first is still actively
+        listening, instead of only during TIME_WAIT. That defeats start_server()'s probe-the-next-free-port
+        loop below -- two servers can end up both bound to what the caller thinks is one port, with cookie and
+        image-session confusion between them (bugs-overview BUG-12). SO_EXCLUSIVEADDRUSE is Windows' own
+        corrective: no other process, with or without SO_REUSEADDR, may bind this port while this one holds it."""
+        if sys.platform == 'win32':
+            self.allow_reuse_address = False               # do not ask the stdlib to set SO_REUSEADDR here
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         socketserver.TCPServer.server_bind(self)
         self.server_name, self.server_port = 'localhost', self.server_address[1]
 
@@ -587,17 +763,26 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self.send_error(404)
 
-    def local(self):
-        """Only this machine's pages: a Host that is not localhost (DNS rebinding), a request another site's page
-        makes (Origin, or Sec-Fetch-Site: a <script> or <img> include sends no Origin) is refused."""
+    def this_host(self):
+        """Host is localhost/127.0.0.1/[::1] (DNS rebinding guard). Checked on every request, token or not."""
         host = (self.headers.get('Host') or '').rsplit(':', 1)[0]
-        if host not in ('localhost', '127.0.0.1', '[::1]'):
-            return False
+        return host in ('localhost', '127.0.0.1', '[::1]')
+
+    def same_site(self):
+        """A request another site's page makes (Origin, or Sec-Fetch-Site: a <script> or <img> include sends no
+        Origin) is refused. Not applied to the one-time `?t=` entry link in enter(): knowing the unguessable token
+        is itself the proof of legitimacy that this check exists to approximate, and that link is only ever reached
+        by navigating from a page this app wrote itself (the handoff redirect), which browsers correctly tag
+        Sec-Fetch-Site: cross-site since it is a file:// page -- rejecting it here would lock the launcher's own
+        "already running" hand-off out of its own server."""
         if self.headers.get('Sec-Fetch-Site', 'same-origin') not in ('same-origin', 'none'):
             return False
         origin = self.headers.get('Origin')
         return origin is None or re.fullmatch(r'http://(localhost|127\.0\.0\.1|\[::1\]):%d' % self.srv.server_port,
                                               origin) is not None
+
+    def local(self):
+        return self.this_host() and self.same_site()
 
     def authed(self):
         """The request carries this run's token: in the cookie the page got at its first visit (HttpOnly, SameSite=Strict:
@@ -633,14 +818,16 @@ class Handler(BaseHTTPRequestHandler):
             return fh.read()
 
     def do_GET(self):
-        if not self.local():
+        if not self.this_host():
             return self.send_error(403)
         p, _, query = self.path.partition('?')
         if p == '/app/ping' and 'nonce=' in query:        # asked by a second start, which has no cookie: proves, reveals nothing
+            if not self.same_site():
+                return self.send_error(403)
             return self.reply(b'lunaratlas:' + self.srv.prove((parse_qs(query).get('nonce') or [''])[0]).encode(), 'text/plain')
-        if self.enter(p, query):
+        if self.enter(p, query):      # the one-time ?t= link: see same_site()'s docstring for why this skips it
             return
-        if not self.authed():
+        if not self.same_site() or not self.authed():
             return self.send_error(403)
         app, s = self.srv.app, self.srv.session
         if app is not None and app.get(self, p):
@@ -663,11 +850,16 @@ class Handler(BaseHTTPRequestHandler):
         if p in ('/edits', '/export/status') and self.session_gone(s, query):
             return
         if p == '/edits':
-            return self.json(dict(read_edits(s.image), rev=s.rev))     # rev: only in the live response, kept out of
-                                                                        # the sidecar file itself (write_edits never
-                                                                        # writes it) so old sidecars keep parsing
+            with s.lock:                        # the durable sidecar revision is the cross-process authority;
+                _, d = resolve_sidecar(s.image)  # a sibling process's write since this session opened is picked
+                s.rev = max(s.rev, edits_rev(d) if isinstance(d, dict) else 0)   # up here, never only in memory
+            return self.json(dict(read_edits(s.image), rev=s.rev))
         if p == '/export/status':
             return self.json(s.job.status() if s.job else dict(state='none'))
+        if p == '/disk.png':
+            if not s.disk:
+                return self.send_error(404)
+            return self.reply(s.disk, 'image/png', cache=True)
         m = re.fullmatch(r'/tiles/(\d+)/(\d+)_(\d+)\.jpg', p)
         if m:
             return self.file(os.path.join(s.tiles, m[1], f'{m[2]}_{m[3]}.jpg'), 'image/jpeg', cache=True)
@@ -755,18 +947,25 @@ class Handler(BaseHTTPRequestHandler):
                                                      # image cannot save into, export, or reveal a different one
         if p == '/edits':
             rev = o.pop('rev', None)                # the page numbers its saves: a late one never overwrites a newer one
-            if isinstance(rev, (int, float)) and not isinstance(rev, bool) and math.isfinite(rev) and abs(rev) < 1e18:
-                with s.lock:
-                    stale = rev < s.rev
-                    s.rev = max(s.rev, rev)
-                if stale:
-                    return self.json(dict(stale=True, rev=s.rev), 409)
-                # not finite (Infinity/NaN) or absurdly large: ignored rather than accepted, so it can never
-                # permanently poison s.rev and lock every future save out as "stale"
+            if not (isinstance(rev, (int, float)) and not isinstance(rev, bool) and math.isfinite(rev) and abs(rev) < 1e18):
+                rev = None                           # not finite (Infinity/NaN) or absurdly large: ignored rather
+                                                     # than accepted, so it can never permanently poison the durable
+                                                     # revision and lock every future save out as "stale"
             try:
-                return self.json(write_edits(s.image, o, s.lock))
-            except (OSError, ValueError, ArithmeticError) as e:
+                # the read of the durable revision, the compare against it, and the write are ONE operation under
+                # one lock (write_edits' combined `lock, file_lock`): the old code checked-and-advanced an
+                # in-memory revision, released the lock, and only then reacquired it to write, so two overlapping
+                # requests could both pass the check (bugs-overview BUG-04)
+                ok, edits, committed = write_edits(s.image, o, s.lock, rev)
+            except (OSError, ValueError, ArithmeticError, SystemExit) as e:
+                # SystemExit: write_json_atomic -> write_atomic raises it on a write failure (full disk, a
+                # read-only folder); the plain `except Exception`-shaped tuple here used to let it escape raw
                 return self.json(dict(error=str(e)), 500)
+            with s.lock:
+                s.rev = max(s.rev, committed)
+            if not ok:
+                return self.json(dict(stale=True, rev=committed), 409)
+            return self.json(edits)
         if p == '/export':
             with s.lock:                            # check-and-start under one lock: two clicks (or two tabs) must
                 if s.job and s.job.state == 'running':      # not both pass the check and both start a process

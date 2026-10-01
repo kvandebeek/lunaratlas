@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
@@ -230,6 +231,95 @@ class ViewerServer(unittest.TestCase):
         d = S.sidecar(self.img)
         self.assertEqual(d['edits'], saved)
         self.assertEqual(ag.Geometry.from_dict(d['geometry']).as_dict(), self.geo.as_dict())   # the geometry is intact
+
+    def test_edits_round_trip_over_a_legacy_sidecar(self):
+        """BUG-05 migration, over real HTTP: an image whose only sidecar is the pre-rename shared-stem file is
+        still editable, and the save publishes the canonical per-extension sidecar without deleting the old one."""
+        import atlas_geo as _ag
+        tmp = tempfile.mkdtemp(prefix='lunaratlas_legacy_')
+        self.addCleanup(shutil.rmtree, tmp, True)
+        img, geo = S.moon_image(tmp)
+        canonical, legacy = _ag.sidecar_path(img), os.path.splitext(img)[0] + '.atlas.json'
+        os.rename(canonical, legacy)                                  # as a sidecar written before the rename
+        self.assertFalse(os.path.exists(canonical))
+        v = S.Viewer(img, os.path.join(tmp, 'home'))
+        self.addCleanup(v.close)
+        code, got, _ = v.request('/edits')
+        self.assertEqual(code, 200, got)
+        e = dict(shapes=[dict(kind='circle', cx=float(geo.t[0]), cy=float(geo.t[1]), r=20, colour='#ffb45a')],
+                 hidden=['Tycho'], labels={}, style={})
+        code, saved, _ = v.request('/edits', e)
+        self.assertEqual(code, 200, saved)
+        self.assertEqual(len(saved['shapes']), 1)
+        self.assertTrue(os.path.exists(canonical), 'the save published the canonical sidecar')
+        self.assertTrue(os.path.exists(legacy), 'the legacy file is left in place, not deleted')
+        with open(canonical, encoding='utf-8') as fh:
+            d = json.load(fh)
+        self.assertEqual(d['edits']['hidden'], ['Tycho'])
+        self.assertEqual(ag.Geometry.from_dict(d['geometry']).as_dict(), geo.as_dict(),
+                         'the geometry carried over from the legacy sidecar')
+
+    def _fresh_viewer(self):
+        """A session of its own: these tests number revisions explicitly, so they must not share cls.v's sidecar
+        with every other test in this class (run in alphabetical order, all against one image)."""
+        tmp = tempfile.mkdtemp(prefix='lunaratlas_rev_')
+        self.addCleanup(shutil.rmtree, tmp, True)
+        img, _ = S.moon_image(tmp)
+        v = S.Viewer(img, os.path.join(tmp, 'home'))
+        self.addCleanup(v.close)
+        return v, img
+
+    def test_overlapping_saves_do_not_race_the_revision_check_and_the_write(self):
+        """BUG-04: the old code checked and advanced an in-memory revision under one lock, released it, and
+        reacquired a (possibly different) lock to write -- so two overlapping requests could both pass the check.
+        Two concrete bodies at two concrete revisions, fired with no ordering guarantee via a thread barrier: the
+        higher revision must win, deterministically, and the loser must be told so, never silently dropped or
+        silently merged."""
+        v, img = self._fresh_viewer()
+        gate = threading.Barrier(2, timeout=30)
+        out = {}
+        def send(key, rev, label):
+            gate.wait()
+            code, body, _ = v.request('/edits', dict(shapes=[], hidden=[label], labels={}, style={}, rev=rev))
+            out[key] = (code, body)
+        ts = [threading.Thread(target=send, args=('low', 1000, 'low')),
+              threading.Thread(target=send, args=('high', 2000, 'high'))]
+        for t in ts: t.start()
+        for t in ts: t.join(30)
+        self.assertEqual(set(out), {'low', 'high'})
+        self.assertEqual(out['high'][0], 200, out['high'])
+        d = S.sidecar(img)
+        self.assertEqual(d['edits']['hidden'], ['high'], 'the higher revision is the one on disk')
+        self.assertEqual(d['edits_rev'], 2000)
+        if out['low'][0] != 200:
+            self.assertEqual(out['low'][0], 409)
+            self.assertEqual(out['low'][1]['rev'], 2000, "the loser is told the revision that beat it")
+        else:
+            # ran first and committed before 'high' started: also acceptable, but then 'high' must be what is on
+            # disk (asserted above) and 'low' must not have clobbered it after the fact
+            pass
+
+    def test_a_stale_save_is_rejected_without_touching_the_sidecar(self):
+        v, img = self._fresh_viewer()
+        code, saved, _ = v.request('/edits', dict(shapes=[], hidden=['first'], labels={}, style={}, rev=500))
+        self.assertEqual(code, 200, saved)
+        before = S.sidecar(img)
+        code, body, _ = v.request('/edits', dict(shapes=[], hidden=['stale'], labels={}, style={}, rev=100))
+        self.assertEqual(code, 409, body)
+        self.assertEqual(body['rev'], 500)
+        after = S.sidecar(img)
+        self.assertEqual(after['edits'], before['edits'], 'the rejected write left the sidecar untouched')
+
+    def test_a_retried_save_at_the_same_revision_is_idempotent(self):
+        """A response lost in transit (the client never saw the 200) and retried with the same body and the same
+        revision must not be treated as a second, different write, and must not be rejected as stale."""
+        v, img = self._fresh_viewer()
+        body = dict(shapes=[], hidden=['once'], labels={}, style={}, rev=700)
+        code1, saved1, _ = v.request('/edits', dict(body))
+        code2, saved2, _ = v.request('/edits', dict(body))
+        self.assertEqual((code1, code2), (200, 200))
+        self.assertEqual(saved1, saved2)
+        self.assertEqual(S.sidecar(img)['edits']['hidden'], ['once'])
 
     def test_bad_requests(self):
         self.assertEqual(self.v.request('/edits', b'{not json')[0], 400)

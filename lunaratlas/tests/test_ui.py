@@ -173,7 +173,9 @@ class UI(S.TempDir):
         jpgs = glob.glob(stem + '_atlas_region_*.jpg')
         self.assertEqual(len(jpgs), 1, os.listdir(self.folder))
         self.assertLessEqual(max(cv2.imread(jpgs[0]).shape[:2]), 512)
-        tifs = [f for f in glob.glob(stem + '_atlas_*.tif*')]
+        # P11's export manifest (OUTPUT.export.json) sits beside the real export and must not be counted as one;
+        # '*.tif*' also matched it (a '.tif.export.json' name), which this test never anticipated
+        tifs = [f for f in glob.glob(stem + '_atlas_*.tif*') if not f.endswith('.export.json')]
         self.assertEqual(len(tifs), 1, os.listdir(self.folder))
         self.assertEqual([os.path.realpath(r) for r in self.revealed], [os.path.realpath(stem + '_atlas.png')],
                          'Show in Finder showed the PNG')
@@ -219,6 +221,13 @@ class UI(S.TempDir):
         src, _ = S.moon_image(self.tmp, name=name)
         os.remove(sidecar_path(src))
         return src
+
+    def test_progress_rendering_against_a_scripted_status_sequence(self):
+        """bugs-overview BUG-22: the real launch journey's own progress sampling used to race a fast synthetic
+        locate (the page can update the bar and navigate away in the same task). This drives the exact
+        render path with a controlled, deterministic status sequence instead -- no real locate, no timing."""
+        img, _ = S.moon_image(self.folder)      # a real photo in the work folder: the header shows its thumbnail
+        self.journey('progressStages', image=img)
 
     def test_from_choosing_a_file_to_the_viewer_and_back(self):
         src = self.source()

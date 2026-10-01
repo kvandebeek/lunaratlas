@@ -12,6 +12,7 @@ import unittest
 import urllib.error
 import urllib.request
 import zipfile
+from unittest import mock
 from urllib.parse import urlparse
 
 import _support as S
@@ -474,6 +475,24 @@ class SomeoneElsesSidecar(S.TempDir):
                    dict(name='ok.ttf', download_url='http://evil.example/ok.ttf'),
                    dict(name='fine.ttf', download_url=atlas_render.GOOGLE_FONTS_RAW + 'main/ofl/x/fine.ttf')]
         self.assertEqual([e['name'] for e in atlas_render.Fonts._listed(listing + ['junk', dict(name=5)])], ['fine.ttf'])
+
+    def test_an_unusable_google_listing_fails_before_font_rendering(self):
+        """GitHub can list a directory, and malformed responses must not create Fonts(files=[])."""
+        import atlas_render
+        listings = (
+            [],
+            [dict(name='static', type='dir')],
+            [dict(name='not-a-font.txt', download_url=atlas_render.GOOGLE_FONTS_RAW + 'main/ofl/x/not-a-font.txt')],
+            dict(message='unexpected object'),
+            'unexpected scalar',
+        )
+        for listing in listings:
+            with self.subTest(listing=listing), mock.patch.object(atlas_render, 'FONT_DIR', self.tmp), \
+                    mock.patch.object(atlas_render, 'https_open', side_effect=lambda *a, **k: io.BytesIO(json.dumps(listing).encode())):
+                with self.assertRaisesRegex(SystemExit, 'no usable .ttf files'):
+                    atlas_render.Fonts('Listing Has No Fonts', S.quiet)
+        self.assertEqual(atlas_render.Fonts._listed(dict(message='unexpected object')), [])
+        self.assertEqual(atlas_render.Fonts._listed('unexpected scalar'), [])
 
 
 @S.needs_all

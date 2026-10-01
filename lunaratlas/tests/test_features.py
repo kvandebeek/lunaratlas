@@ -7,6 +7,7 @@ import os
 import shutil
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -131,6 +132,19 @@ class FindMatches(unittest.TestCase):
         self.assertIsNone(hit)
         self.assertEqual(near, ['Mare Imbrium'])
 
+    def test_a_blank_name_matches_nothing(self):
+        """BUG-17: strip('').startswith('') used to match the first feature in the list for an empty or
+        whitespace-only query, so `find IMAGE ""` reported an unrelated feature and `export --around " "` could
+        export around whatever feature happened to sort first."""
+        for q in ('', ' ', '\t', '   \n  '):
+            with self.subTest(repr(q)):
+                hit, others, near = la.find_matches(self.FEATS, q)
+                self.assertIsNone(hit)
+                self.assertEqual(others, [])
+                self.assertEqual(near, [])
+                with self.assertRaises(SystemExit):
+                    la.find_feature(self.FEATS, q)
+
 
 class Turning(S.TempDir):
     """north_up: the picture, its geometry and the drawings turn together."""
@@ -206,6 +220,56 @@ class Turning(S.TempDir):
         self.assertEqual(out['labels'], {'Tycho': dict(dx=4.0, dy=-3.0, colour='#f00')}, 'offsets turn, with no shift')
         self.assertEqual((out['hidden'], out['style']), (['A'], dict(fs=1)))
         self.assertEqual(edits['shapes'][0], dict(kind='circle', cx=1, cy=2, r=3), 'the original is not touched')
+
+    @S.needs_all
+    def test_a_moved_label_s_absolute_position_survives_a_turn(self):
+        """BUG-10: a moved label is stored as home + offset. The old code rotated the offset alone; the home
+        itself generally moves to a DIFFERENT place after a turn (it depends on the feature's new on-image
+        position, the new text layout, etc.), not merely a rotation of the old home. With real anchors, the
+        stored offset is derived from an independently computed full-point transform of the absolute position,
+        not merely trusted from the implementation under test."""
+        geo = S.truth_geometry()
+        feats = S.projected_features(geo)
+        f = next(x for x in feats if x['name'] == 'Tycho')
+        fonts = ar.Fonts('Roboto', S.quiet)
+        home_old = ar.label_anchor(f, geo, fonts, min_px=10)
+        self.assertIsNotNone(home_old)
+        dx, dy = 15.0, -9.0                 # an arbitrary move away from the automatic spot
+        edits = dict(labels={'Tycho': dict(dx=dx, dy=dy, colour='#fff')})
+        for angle in (0.0, 73.0, 180.0):
+            with self.subTest(angle=angle):
+                raw = np.zeros((int(S.DISK['H']), int(S.DISK['W']), 3), np.uint8)
+                geo2 = ag.Geometry(geo.lat0, geo.lon0,
+                                   np.array([[math.cos(math.radians(angle)), -math.sin(math.radians(angle))],
+                                             [math.sin(math.radians(angle)), math.cos(math.radians(angle))]]) @ geo.A,
+                                   geo.t)
+                _, new_geo, (M, b) = ag.north_up(raw, geo2)
+                new_feats = S.projected_features(new_geo)
+                nf = next(x for x in new_feats if x['name'] == 'Tycho')
+                home_new = ar.label_anchor(nf, new_geo, fonts, min_px=10)
+                self.assertIsNotNone(home_new)
+                out = ar.transform_edits(edits, M, b, anchors={'Tycho': (home_old, home_new)})
+                got_dx, got_dy = out['labels']['Tycho']['dx'], out['labels']['Tycho']['dy']
+                # independently recomputed: the absolute point the user actually placed, carried through the
+                # same M @ point + b every drawing uses, then re-expressed relative to the NEW home
+                old_point = np.array([home_old[0] + dx, home_old[1] + dy])
+                want_point = M @ old_point + b
+                want_dx, want_dy = want_point[0] - home_new[0], want_point[1] - home_new[1]
+                self.assertAlmostEqual(got_dx, want_dx, places=4)
+                self.assertAlmostEqual(got_dy, want_dy, places=4)
+                # the absolute screen position (not just the offset) must match the full-point transform
+                got_point = np.array([home_new[0] + got_dx, home_new[1] + got_dy])
+                np.testing.assert_allclose(got_point, want_point, atol=1e-4)
+
+    @S.needs_all
+    def test_without_anchors_falls_back_to_rotating_the_offset_alone(self):
+        """The documented legacy guarantee for data this packet cannot reconstruct exactly: old {dx,dy} data with
+        no geometry/font context available still renders, as a plain rotation of the stored offset."""
+        M, b = np.array([[0.0, 1.0], [-1.0, 0.0]]), np.array([5.0, 7.0])
+        edits = dict(labels={'Tycho': dict(dx=3.0, dy=4.0, colour='#f00')})
+        out = ar.transform_edits(edits, M, b)
+        self.assertEqual(out['labels']['Tycho']['dx'], 4.0)
+        self.assertEqual(out['labels']['Tycho']['dy'], -3.0)
 
 
 @S.needs_all
@@ -382,6 +446,60 @@ class Batch(S.TempDir):
         out_file = os.path.join(self.folder, 'a_moon_atlas_Copernicus.png')
         self.assertTrue(os.path.exists(out_file), out)
         self.assertLessEqual(max(cv2.imread(out_file).shape[:2]), 250)
+
+    def test_skip_existing_regenerates_after_a_saved_drawing(self):
+        """bugs-overview BUG-11: --skip-existing only compared mtimes, so a drawing saved in the viewer after
+        the last export left a stale export in place, reported as skipped."""
+        self.batch()
+        img = os.path.join(self.folder, 'a_moon.tif')
+        d = S.sidecar(img)
+        d['edits'] = dict(shapes=[dict(kind='text', x=10, y=10, label='hi')])
+        ag.write_json_atomic(ag.sidecar_path(img), d)
+        os.utime(os.path.join(self.folder, 'a_moon_atlas.jpg'), None)   # touch the export to a time AFTER the edit
+        code, out = self.batch('--skip-existing')
+        self.assertRegex(out, r'a_moon\.tif +exported')
+
+    def test_skip_existing_regenerates_after_a_changed_option(self):
+        self.batch()
+        code, out = self.batch('--skip-existing', '--night', 'show')    # a different effective option than before
+        self.assertRegex(out, r'a_moon\.tif +exported')
+
+    def test_skip_existing_does_not_mark_a_failed_export_current(self):
+        """A failed export must leave no fresh manifest to be skipped over next time (bugs-overview BUG-11)."""
+        img = os.path.join(self.folder, 'a_moon.tif')
+        out = os.path.join(self.folder, 'a_moon_atlas.jpg')
+        with mock.patch.object(cv2, 'imwrite', return_value=False):   # the encoder refused it: write_atomic's
+            code1, out1 = S.run_main('export', img, '-o', out, '--format', 'jpg')   # own OSError -> SystemExit
+        self.assertIsNotNone(code1)
+        self.assertFalse(os.path.exists(out + '.export.json'))
+        code2, out2 = self.batch('--skip-existing')
+        self.assertRegex(out2, r'a_moon\.tif +exported')
+
+    def test_locate_only_skip_existing_consults_positioning_not_an_export_file(self):
+        """bugs-overview BUG-11 item 5: a --locate-only --skip-existing run must check whether the IMAGE is
+        already positioned, never an unrelated export file's mtime (there is none in locate-only mode)."""
+        code, out = self.batch('-r', '--locate-only')
+        self.assertRegex(out, r'a_moon\.tif +located')
+        code, out = self.batch('-r', '--locate-only', '--skip-existing')
+        self.assertRegex(out, r'a_moon\.tif +skipped')
+        # an export file existing (from a previous, non-locate-only run) must not fool this check either way
+        self.batch()
+        code, out = self.batch('-r', '--locate-only', '--skip-existing')
+        self.assertRegex(out, r'a_moon\.tif +skipped')
+
+
+class RecentExcludesExports(S.TempDir):
+    """bugs-overview BUG-13: App.recent() used to list every image file, including LunarAtlas's own
+    IMAGE_atlas….ext exports, as an unsolved photo -- sharing atlas_paths.is_export_name with batch_images()."""
+
+    def test_an_export_file_does_not_appear_in_recent(self):
+        from atlas_app import App
+        img, _ = S.moon_image(self.tmp)
+        code, out = S.run_main('export', img, '-o', os.path.join(self.tmp, 'moon_atlas.tif'))
+        self.assertIsNone(code, out)
+        rows = {r['name']: r for r in App(self.tmp, S.quiet).recent()}
+        self.assertIn('moon.tif', rows)
+        self.assertNotIn('moon_atlas.tif', rows)
 
 
 if __name__ == '__main__':

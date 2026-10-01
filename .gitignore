@@ -7,6 +7,8 @@ lunaratlas/data/
 __pycache__/
 *.pyc
 .DS_Store
+scripts/testimages_results
+
 
 # internal working notes, not part of the published docs
 lunaratlas/REMAINING_WORK.md
@@ -14,3 +16,4 @@ lunaratlas/REMAINING_WORK.md
 # packaged-app builds (packaging/build.py)
 build/
 dist/
+

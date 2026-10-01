@@ -5,6 +5,7 @@ import os
 import shutil
 import struct
 import unittest
+import warnings
 from unittest import mock
 
 import _support as S
@@ -245,6 +246,16 @@ class Layout(unittest.TestCase):
         dim = next(l for l in self.place(light=light, night='dim') if l['text'] == 'Copernicus')
         self.assertLess(dim['colour'][3], 150)
         self.assertIn('Copernicus', self.names(self.place(light=light, night='show')))
+
+    def test_an_unknown_or_malformed_light_array_is_treated_as_no_dimming(self):
+        """BUG-07: layout() only checked `light is not None` before indexing light[i]; a stale cache, or any
+        array for a different feature list, could IndexError or silently misassociate values. Anything that is
+        not exactly one finite value per feature is now treated the same as light=None."""
+        baseline = self.names(self.place(night='hide'))
+        for bad in (np.ones(len(self.feats) - 1), np.ones(len(self.feats) + 3),
+                   np.array([float('nan')] * len(self.feats)), [1.0, 2.0], 'not an array', 5):
+            with self.subTest(repr(bad)[:40]):
+                self.assertEqual(self.names(self.place(light=bad, night='hide')), baseline)
 
     def test_landing_sites_only_when_zoomed_in(self):
         self.assertFalse(any(self.feats[l['feature']]['cls'] == 'landing' for l in self.place()))   # 3.9 km/px
@@ -565,10 +576,28 @@ class QualityMeasures(unittest.TestCase):
     def test_limb_edge_width_of_a_gaussian_blur(self):
         for sigma in (1.5, 3.0, 6.0):
             img = cv2.GaussianBlur(self.base(), (0, 0), sigma) * (0.6 + 0.05 * self.texture()) * 50000 + 800
-            lp = aq.limb_profile(img, self.CX, self.CY, self.R)
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', RuntimeWarning)
+                lp = aq.limb_profile(img, self.CX, self.CY, self.R)
             self.assertAlmostEqual(lp['edge_width_px'], 2.5631 * sigma, delta=0.1 * sigma + 0.2)     # 10-90 % of a Gaussian
             self.assertLess(abs(lp['overshoot']), 0.12)
             self.assertLess(abs(lp['undershoot']), 0.06)
+
+    def test_limb_profile_with_a_radius_offset_emits_no_all_nan_warning(self):
+        """BUG-16: the fitted circle is only good to a few native pixels (limb_profile's own docstring), so a
+        real sign-consistent offset between the fit and the true limb -- not blur -- is what pushes some aligned
+        rows' padding to land in the same column for every angle. Confirmed already fixed in this tree: the
+        finite-column mask is computed before nanmedian and applied to both the profile and its coordinate (t),
+        so no column nanmedian ever sees is all-NaN. This locks that in."""
+        for dR in (0.0, 1.0, 3.0):
+            img = cv2.GaussianBlur((((np.mgrid[0:self.H, 0:self.W][1].astype(np.float32) - self.CX) ** 2 +
+                                     (np.mgrid[0:self.H, 0:self.W][0].astype(np.float32) - self.CY) ** 2) <
+                                    (self.R + dR) ** 2).astype(np.float32), (0, 0), 1.0) * 50000 + 800
+            with self.subTest(dR=dR), warnings.catch_warnings():
+                warnings.simplefilter('error', RuntimeWarning)
+                lp = aq.limb_profile(img, self.CX, self.CY, self.R)
+            self.assertIsNotNone(lp)
+            self.assertTrue(math.isfinite(lp['edge_width_px']))
 
     def test_oversharpening_halo(self):
         img = cv2.GaussianBlur(self.base(), (0, 0), 2)
@@ -602,12 +631,45 @@ class QualityMeasures(unittest.TestCase):
         self.assertLess(aq.jpeg_blocking(best), 1.3)
 
     def test_posterisation(self):
+        # posterisation() now returns (score or None, diagnostic or None); 8-bit keeps the original calibrated
+        # score and never gets a diagnostic (bugs-overview BUG-09 only concerns above-8-bit data)
         t8 = np.clip((0.5 + 0.2 * self.texture()) * 255, 0, 255).astype(np.uint8)
         m = np.ones(t8.shape, bool)
-        self.assertEqual(aq.posterisation(t8.astype(np.float32), m, t8), 0.0)
+        self.assertEqual(aq.posterisation(t8.astype(np.float32), m, t8), (0.0, None))
         p = t8 // 4 * 4
-        self.assertGreater(aq.posterisation(p.astype(np.float32), m, p), 0.6)
-        self.assertIsNone(aq.posterisation(t8.astype(np.float32), np.zeros_like(m), t8))
+        score, diag = aq.posterisation(p.astype(np.float32), m, p)
+        self.assertGreater(score, 0.6)
+        self.assertIsNone(diag)
+        self.assertEqual(aq.posterisation(t8.astype(np.float32), np.zeros_like(m), t8), (None, None))
+
+    def test_posterisation_above_8_bits_is_diagnostic_not_a_rejection(self):
+        """BUG-09: a dim 10/12-bit capture stored in 16-bit has real, expected gaps every native quantisation
+        step; the old 1-unit-step count misread that as posterisation. An 8-bit image stretched to 16-bit spans
+        far more than the old 4096-unit shortcut and used to evade detection entirely. Both now get a diagnostic,
+        never a score that verdict() could reject on."""
+        rng = np.random.default_rng(3)
+        m = np.ones((300, 300), bool)
+        # a native 12-bit sensor value (step 16): dim, but not destructively quantised -- the per-packet
+        # acceptance case that must not be refused. The ADC itself only ever outputs multiples of the step, so
+        # unlike real photon/read noise (which the sensor already baked into which 12-bit code each pixel got),
+        # nothing here should land between steps
+        dim12 = (rng.integers(100, 800, (300, 300)) // 16 * 16).astype(np.float32)
+        score, diag = aq.posterisation(dim12, m, dim12.astype(np.uint16))
+        self.assertIsNone(score, 'ambiguous bit depth: never a hard rejection')
+        self.assertIsNotNone(diag)
+        self.assertAlmostEqual(diag['step'], 16, delta=4)
+        # smooth native 16-bit data: no detectable step at all
+        smooth = (rng.normal(20000, 1500, (300, 300))).astype(np.float32)
+        score, diag = aq.posterisation(smooth, m, smooth.astype(np.uint16))
+        self.assertIsNone(score)
+        self.assertLessEqual((diag or {}).get('step', 0), 1.5)
+        # an 8-bit ramp stretched by 257 into 16-bit: far outside the old 4096-unit range, used to score 0.0
+        # (confidently "not posterised") with no way to tell; now a diagnostic, still never a hard rejection
+        ramp8 = (rng.integers(0, 256, (300, 300)) * 257).astype(np.float32)
+        score, diag = aq.posterisation(ramp8, m, ramp8.astype(np.uint16))
+        self.assertIsNone(score)
+        self.assertIsNotNone(diag)
+        self.assertAlmostEqual(diag['step'], 257, delta=30)
 
     def test_colour_boost_and_fringe(self):
         g = cv2.GaussianBlur(self.base(), (0, 0), 2) * (0.6 + 0.05 * self.texture())

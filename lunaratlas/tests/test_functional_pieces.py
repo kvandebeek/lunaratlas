@@ -11,6 +11,7 @@ import json
 import os
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 import _support as S
 import cv2
@@ -173,8 +174,11 @@ class ExportOptions(S.TempDir, unittest.TestCase):
         return av.export_command(self.IMG, o)[1]
 
     def test_nothing_is_given_means_a_plain_tiff_next_to_the_image(self):
-        self.assertEqual(self.args(), ['export', self.IMG, '--format', 'tiff', '--layers', 'none',
-                                       '--overwrite', '-o', '/x/moon_atlas.tif'])
+        # bugs-overview BUG-01: every dialog default is sent explicitly now, so a full/default export is not left
+        # to whatever the environment's own CLI defaults happen to be for the same-named flags
+        self.assertEqual(self.args(), ['export', self.IMG, '--format', 'tiff', '--max-size', '100000', '--layers', 'none',
+                                       '--no-lettered', '--no-landing', '--rims', '--grid', '--drawings', '--info',
+                                       '--night', 'hide', '--overwrite', '-o', '/x/moon_atlas.tif'])
         self.assertEqual(self.args(format='png')[-1], '/x/moon_atlas.png')
         self.assertEqual(self.args(format='jpg')[-1], '/x/moon_atlas.jpg')
 
@@ -185,6 +189,9 @@ class ExportOptions(S.TempDir, unittest.TestCase):
         self.assertEqual(b[b.index('--max-size') + 1], '2000')
         self.assertNotIn('--scale', self.args(), 'no scale means 1:1, not a flag')
         self.assertNotIn('--max-size', self.args(scale='half'), 'the two are not sent together')
+        self.assertIn('--max-size', self.args())
+        self.assertEqual(self.args()[self.args().index('--max-size') + 1], '100000',
+                         "full size neutralizes a nonzero LUNARATLAS_MAX_SIZE in the environment (BUG-01)")
 
     def test_the_current_view_becomes_a_region(self):
         a = self.args(region='view', box=[10, 20, 300, 400])
@@ -205,19 +212,32 @@ class ExportOptions(S.TempDir, unittest.TestCase):
     def test_names_off_means_layers_none(self):
         a = self.args(names=False)
         self.assertEqual(a[a.index('--layers') + 1], 'none')
+        self.assertIn('--no-lettered', a)
+        self.assertIn('--no-landing', a)
         self.assertEqual(self.args(layers=[])[self.args(layers=[]).index('--layers') + 1], 'none')
         b = self.args(layers=['area', 'crater', 'bogus'])
         self.assertEqual(b[b.index('--layers') + 1], 'area,crater', 'an unknown layer is dropped')
+        self.assertIn('--no-lettered', b, "'lettered' was not in the list, so it is explicitly turned off")
         # nothing said about layers, and no switch: the export's own default (all of them) is left alone
         self.assertEqual(self.args()[self.args().index('--layers') + 1], 'none', 'the viewer sends its own choice')
-        self.assertNotIn('--layers', self.args(layers=['area', 'crater', 'lettered', 'relief', 'landing']))
+        full = self.args(layers=['area', 'crater', 'lettered', 'relief', 'landing'])
+        # bugs-overview BUG-01: every layer the dialog selected is sent explicitly now, including when all five
+        # are selected, and --lettered/--landing are sent too so the CLI's own environment-driven --lettered/
+        # --landing switches cannot re-discard a layer the dialog's own list included
+        self.assertEqual(full[full.index('--layers') + 1], 'area,crater,lettered,relief,landing')
+        self.assertIn('--lettered', full)
+        self.assertIn('--landing', full)
 
-    def test_each_switch_becomes_its_own_no_flag(self):
-        for flag, key in (('--no-rims', 'rims'), ('--no-grid', 'grid'),
-                          ('--no-drawings', 'drawings'), ('--no-info', 'info')):
-            with self.subTest(flag):
-                self.assertIn(flag, self.args(**{key: False}))
-                self.assertNotIn(flag, self.args(**{key: True}))
+    def test_each_switch_becomes_its_own_flag_in_both_directions(self):
+        # bugs-overview BUG-01: both polarities are sent explicitly now, not only the off one, so an environment
+        # default of 0 for one of these cannot silently override the dialog's own "on" choice
+        for on, off, key in (('--rims', '--no-rims', 'rims'), ('--grid', '--no-grid', 'grid'),
+                             ('--drawings', '--no-drawings', 'drawings'), ('--info', '--no-info', 'info')):
+            with self.subTest(key):
+                self.assertIn(off, self.args(**{key: False}))
+                self.assertNotIn(on, self.args(**{key: False}))
+                self.assertIn(on, self.args(**{key: True}))
+                self.assertNotIn(off, self.args(**{key: True}))
 
     def test_numbers_are_forced_into_the_range_the_cli_accepts(self):
         a = self.args(min_px=1e9, font_scale=0.001)
@@ -256,9 +276,13 @@ class ExportOptions(S.TempDir, unittest.TestCase):
         self.assertNotIn('--font', self.args(font='Comic Sans'))
 
     def test_night_and_force(self):
-        self.assertNotIn('--night', self.args())
+        # bugs-overview BUG-01: '--night' is always sent now, from a whitelist, including the dialog's own
+        # default 'hide' -- which used to be silently omitted and so fall back on the CLI's own different
+        # default ('dim'), dimming names the viewer showed as hidden
+        self.assertEqual(self.args()[self.args().index('--night') + 1], 'hide')
         self.assertEqual(self.args(night='dim')[self.args(night='dim').index('--night') + 1], 'dim')
-        self.assertNotIn('--night', self.args(night='never'), 'an unknown value is the default')
+        self.assertEqual(self.args(night='never')[self.args(night='never').index('--night') + 1], 'hide',
+                         'an unknown value is treated as the dialog default, not omitted')
         self.assertIn('--force', self.args(force=True))
         self.assertNotIn('--force', self.args(force=False))
 
@@ -275,6 +299,31 @@ class ExportOptions(S.TempDir, unittest.TestCase):
         self.assertEqual(sum('rm -rf' in a for a in args), 1, 'and it is one argument, not several')
         self.assertNotIn(';', out, 'the output name has the punctuation taken out')
         self.assertTrue(out.endswith('_atlas_a_rm_-rf_whoami.tif'), out)
+
+
+class ExportOptionsAgainstTheRealParser(S.TempDir, unittest.TestCase):
+    """bugs-overview BUG-01, acceptance: the dialog's choices must win over conflicting environment defaults, run
+    through the real argument parser and a real export, not just checked for flag presence in the argv list."""
+
+    def test_the_dialogs_choices_survive_a_contrary_environment(self):
+        import atlas_view as av
+        img = os.path.join(self.tmp, 'moon.tif')
+        cv2.imwrite(img, np.zeros((300, 300), np.uint8))
+        S.locate_as(img, S.truth_geometry(W=300, H=300))
+        # the opposite of every one of these from the dialog's own choice below
+        env = dict(LUNARATLAS_NIGHT='show', LUNARATLAS_RIMS='0', LUNARATLAS_GRID='1', LUNARATLAS_DRAWINGS='0',
+                  LUNARATLAS_INFO='0', LUNARATLAS_LETTERED='0', LUNARATLAS_LANDING='1', LUNARATLAS_MAX_SIZE='50')
+        o = dict(night='hide', rims=True, grid=False, drawings=True, info=True,
+                 layers=['area', 'crater', 'lettered', 'relief'], names=True,
+                 scale='full', format='png')
+        args, out = av.export_command(img, o)
+        import tool_settings as ts
+        with mock.patch.dict(os.environ, env), mock.patch.object(ts, '_raw', None):
+            code, log = S.run_main(*args[2:])
+        self.assertIsNone(code, log)
+        self.assertTrue(os.path.exists(out))
+        img_out = cv2.imread(out, cv2.IMREAD_UNCHANGED)
+        self.assertEqual(img_out.shape[0], 300, 'LUNARATLAS_MAX_SIZE=50 did not shrink a full-size export')
 
 
 class CommandLineHelpers(S.TempDir, unittest.TestCase):
@@ -295,10 +344,14 @@ class CommandLineHelpers(S.TempDir, unittest.TestCase):
                     ma.find_feature(self.feats, bad)
                 self.assertIn('no feature named', str(cm.exception))
 
-    def test_an_empty_name_matches_the_first_feature_rather_than_refusing(self):
-        # the viewer never sends an empty name; if one arrives it finds the first feature instead of failing
-        self.assertEqual(ma.find_feature(self.feats, '')['name'], self.feats[0]['name'])
-        self.assertEqual(ma.find_feature(self.feats, '   ')['name'], self.feats[0]['name'])
+    def test_a_blank_name_is_refused_not_matched_to_the_first_feature(self):
+        # bugs-overview BUG-17: strip('').startswith('') used to match whatever feature sorted first; a blank
+        # name must find nothing, not an arbitrary one
+        for bad in ('', '   '):
+            with self.subTest(repr(bad)):
+                with self.assertRaises(SystemExit) as cm:
+                    ma.find_feature(self.feats, bad)
+                self.assertIn('no feature named', str(cm.exception))
 
     def test_an_exact_match_wins_over_a_prefix(self):
         names = [dict(name='Copernicus A', lat=0, lon=0), dict(name='Copernicus', lat=1, lon=1)]

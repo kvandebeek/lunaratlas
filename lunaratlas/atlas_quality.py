@@ -154,9 +154,18 @@ def limb_profile(g, cx, cy, R, half=32, step=0.25, n_ang=1440):
     if len(aligned) < 20:
         return None
     A = np.array(aligned)
-    med = np.nanmedian(A, 0)
-    good = np.isfinite(med)
-    tt, mm = t[good], med[good]
+    # Alignment deliberately pads profile ends with NaN. Drop columns which are
+    # padding for every angle before nanmedian so blurred/shifted limbs do not
+    # emit an All-NaN warning (which callers may promote to an error).
+    finite_columns = np.isfinite(A).any(0)
+    if finite_columns.sum() < 2:
+        return None
+    tt = t[finite_columns]
+    mm = np.nanmedian(A[:, finite_columns], 0)
+    good = np.isfinite(mm)
+    tt, mm = tt[good], mm[good]
+    if len(mm) < 2:
+        return None
 
     def cross(level):
         j = np.nonzero((mm[:-1] >= level) & (mm[1:] < level))[0]
@@ -320,21 +329,40 @@ def jpeg_blocking(g8, mask=None):
 
 
 def posterisation(g, mask, raw):
+    """(score or None, diagnostic dict or None). 8-bit data keeps the original, well-calibrated check: the share
+    of grey levels with no pixels at all is a real defect there, since 256 levels is the format's own full
+    precision. Above 8 bits the same 1-unit-step count is wrong both ways (bugs-overview BUG-09): a dim 10/12-bit
+    capture stored in 16-bit has real, expected gaps every native quantisation step, and conversely an 8-bit
+    image stretched to 16-bit spans a far wider numeric range than the 4096-unit shortcut this used to check, so
+    it could evade detection entirely. A pixel histogram alone cannot prove a file's acquisition history (an
+    ordinary low-bit-depth sensor and destructively re-quantised data can look identical), so above 8 bits this
+    now returns a diagnostic -- the detected step and how many of the levels that step predicts are actually
+    occupied -- and leaves the score itself None (unknown: verdict()'s `over()` never rejects on None)."""
     v = g[mask]
     if v.size < 1000:
-        return None
+        return None, None
     if v.size > 4_000_000:
         v = v[np.random.default_rng(0).integers(0, v.size, 4_000_000)]
     lo, hi = np.percentile(v, [1, 99])
     if raw.dtype == np.uint8:
         levels = np.arange(math.floor(lo), math.ceil(hi) + 1)
         if len(levels) < 8:
-            return 1.0
+            return 1.0, None
         hist = np.bincount(np.clip(np.round(v).astype(int), 0, 255), minlength=256)[levels.astype(int)]
-        return float((hist == 0).mean())
+        return float((hist == 0).mean()), None
     q = np.round(v).astype(np.int64)
     q = q[(q >= lo) & (q <= hi)]
-    return float(1 - len(np.unique(q)) / max(hi - lo + 1, 1)) if hi - lo < 4096 else 0.0
+    uniq = np.unique(q)
+    if len(uniq) < 2:
+        return None, None
+    span = float(hi - lo)
+    step = float(np.median(np.diff(uniq)))        # the data's own apparent quantisation step, not an assumed 1
+    if step <= 1.5:                                # no detectable step: as finely quantised as this depth allows
+        return None, dict(step=round(step, 3), occupied=int(len(uniq)), expected_at_step=None)
+    expected = span / step + 1
+    empty_at_step = max(0.0, 1 - len(uniq) / max(expected, 1.0))
+    return None, dict(step=round(step, 3), occupied=int(len(uniq)), expected_at_step=round(expected, 1),
+                      empty_at_detected_step=round(empty_at_step, 3))
 
 
 # ---------------------------------------------------------------- all together
@@ -377,5 +405,7 @@ def measure(raw, limb=None, km_per_px=None):
     if q.get('fringe_px') is not None and q.get('edge_width_px'):
         # a colour shift larger than the limb's own blur is a visible fringe; one inside a soft limb is not
         q['fringe_rel'] = round(q['fringe_px'] / max(q['edge_width_px'], 1.0), 3)
-    q['posterisation'] = posterisation(g, mask, raw)
+    q['posterisation'], diag = posterisation(g, mask, raw)
+    if diag is not None:               # above 8 bits: informational only, never a calibrated rejection (BUG-09)
+        q['posterisation_diagnostic'] = diag
     return q

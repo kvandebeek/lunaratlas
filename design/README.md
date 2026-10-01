@@ -13,11 +13,11 @@ a native window (WebKit on macOS, WebView2 on Windows) showing these same pages.
 | [`03-home-drag-over.png`](screenshots/03-home-drag-over.png) | Drag-over state: solid amber border, amber tint, "Release to open this photo" |
 | [`04-home-row-hover.png`](screenshots/04-home-row-hover.png) | Earlier photos: row hover (whole row is clickable; explicit Open button kept) |
 | [`05-home-photo-chosen.png`](screenshots/05-home-photo-chosen.png) | A photo chosen without a time stamp in its name: asks when it was taken |
-| [`06-progress-downloading.png`](screenshots/06-progress-downloading.png) | Progress, first run: named stages; "Downloading Moon maps" shows real MB (per file and in total) |
+| [`06-progress-downloading.png`](screenshots/06-progress-downloading.png) | Progress, first run: the photo being worked on (thumbnail + name) in the header; named stages; "Downloading Moon maps" shows real MB (per file and in total) |
 | [`07-progress-searching.png`](screenshots/07-progress-searching.png) | Progress, later runs: the download stage is skipped ("already on this computer") |
 | [`08-progress-details-open.png`](screenshots/08-progress-details-open.png) | Details (the raw log) expanded: monospace, Copy button |
 | [`09-progress-quality-refused.png`](screenshots/09-progress-quality-refused.png) | Quality refused: plain-language reasons (raw measurement below each), "Name it anyway" |
-| [`10-progress-error.png`](screenshots/10-progress-error.png) | Failure: plain-language title and advice; raw text stays in Details |
+| [`10-progress-error.png`](screenshots/10-progress-error.png) | Failure: plain-language title and advice; the photo stays on screen so it is clear which one failed |
 | [`11-viewer.png`](screenshots/11-viewer.png) | Viewer: brand icon in the top bar, tool rail in groups, Layers panel with amber switches and right-aligned counts, split status bar (cursor lat/lon + km/px | zoom, Fit, 1:1, Export) |
 | [`12-viewer-grid.png`](screenshots/12-viewer-grid.png) | Lat/lon grid in cyan; degree labels only where they collide with no name and no other label |
 | [`13-viewer-tool-tooltip.png`](screenshots/13-viewer-tool-tooltip.png) | Tool rail tooltip: tool name + shortcut; active tool = amber fill + side marker |

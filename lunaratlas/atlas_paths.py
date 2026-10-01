@@ -4,9 +4,11 @@ From a checkout the reference data stays in lunaratlas/data and .env next to too
 app's own folder is read-only (and signed on macOS), so there both live in the user's application-data folder.
 LUNARATLAS_DATA overrides the data folder either way.
 """
+import contextlib
 import os
 import sys
 import tempfile
+import time as _time
 
 FROZEN = bool(getattr(sys, 'frozen', False))
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +29,27 @@ def user_dir(kind):
     return os.path.join(base, APP if sys.platform == 'darwin' else APP.lower())
 
 
+# ---------------------------------------------------------------- image/export identity
+#
+# Shared here (not in atlas_app.py or lunaratlas.py, which cannot import each other without a cycle) so the
+# launcher's recent-photos list and the CLI's batch mode agree on what counts as an image and what is one of
+# LunarAtlas's own exports (bugs-overview BUG-13: App.recent() used to list every image file, including its own
+# IMAGE_atlas….ext exports, as an unsolved photo).
+IMAGE_EXT = ('.tif', '.tiff', '.png', '.jpg', '.jpeg')
+_ATLAS_RE = None
+
+
+def is_export_name(name):
+    """True for a name this app would itself have written as a default export (IMAGE_atlas….ext,
+    IMAGE_atlas_NAME.ext): the stem ends in "_atlas" or contains "_atlas_"."""
+    global _ATLAS_RE
+    if _ATLAS_RE is None:
+        import re
+        _ATLAS_RE = re.compile(r'_atlas(_|$)')
+    stem = os.path.splitext(name)[0]
+    return bool(_ATLAS_RE.search(stem))
+
+
 FONTS = os.path.join(HERE, 'fonts')          # the bundled label fonts (OFL), shipped with the app: no download
 DATA = os.environ.get('LUNARATLAS_DATA') or (os.path.join(user_dir('data'), 'data') if FROZEN else os.path.join(HERE, 'data'))
 CACHE = user_dir('cache')
@@ -42,6 +65,72 @@ def self_command(*args):
 
 _UMASK = os.umask(0)
 os.umask(_UMASK)
+
+
+# ---------------------------------------------------------------- cross-process file lock
+#
+# threading.Lock() alone only serializes callers inside one process; two processes with the same image open (the
+# launcher's `view` subprocess and a second `lunaratlas.py` CLI invocation, or two viewer servers pointed at one
+# work folder) can still race on the same sidecar (bugs-overview BUG-04/BUG-14). This advisory lock is held on a
+# "<sidecar>.lock" file beside the sidecar, using flock on POSIX and a byte-range lock on Windows; it is never
+# deleted, so a process that opens it after another is already waiting never has the file disappear under it.
+def _lock_path(path):
+    return path + '.lock'
+
+
+if sys.platform == 'win32':
+    import msvcrt
+
+    @contextlib.contextmanager
+    def file_lock(path, timeout=30):
+        lp = _lock_path(path)
+        fh = open(lp, 'a+b')
+        try:
+            t0 = _time.monotonic()
+            while True:
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if _time.monotonic() - t0 > timeout:
+                        raise TimeoutError(f'timed out waiting for the lock on {os.path.basename(path)}') from None
+                    _time.sleep(0.05)
+            try:
+                yield
+            finally:
+                try:
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+        finally:
+            fh.close()
+else:
+    import fcntl
+
+    @contextlib.contextmanager
+    def file_lock(path, timeout=30):
+        lp = _lock_path(path)
+        fh = open(lp, 'a+b')
+        try:
+            t0 = _time.monotonic()
+            while True:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if _time.monotonic() - t0 > timeout:
+                        raise TimeoutError(f'timed out waiting for the lock on {os.path.basename(path)}') from None
+                    _time.sleep(0.05)
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+        finally:
+            fh.close()
 
 
 def temp_beside(path, suffix=None):

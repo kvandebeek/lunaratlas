@@ -29,12 +29,15 @@ from atlas_geo import (DATA, R_MOON, Geometry, Reference, download, fit_correcti
 
 OPTICS_FILE = 'lunaratlas_optics.json'
 OLD_OPTICS_FILES = ('moon_atlas_optics.json',)   # the same file, written before the rename; still read
+MAX_CLOSEUP_RMS_PX = 6.0   # a genuine close-up fit is 1-3 px; past this the "matches" are a self-consistent wrong guess
 # the user's equipment; LUNARATLAS_TELESCOPE, _FOCAL_MM, _EXTENDERS ("name:factor, …") and _CAMERAS ("name:µm, …") in .env
 TELESCOPE = (ts.get('LUNARATLAS_TELESCOPE', '250 PDS'), ts.get('LUNARATLAS_FOCAL_MM', 1200.0, float))
 EXTENDERS = tuple(ts.pairs('LUNARATLAS_EXTENDERS', [('native', 1.0), ('2× ES Focal Extender', 2.0),
                                                      ('2.5× TV Powermate', 2.5), ('3× ES Focal Extender', 3.0)]))
 CAMERAS = tuple(ts.pairs('LUNARATLAS_CAMERAS', [('IMX678', 2.0), ('IMX533', 3.76), ('IMX462', 2.9)]))
+BINNINGS = tuple(ts.pairs('LUNARATLAS_BINNINGS', [('1×1', 1.0), ('2×2', 2.0)]))
 KM_PER_ARCSEC_PER_KM = math.pi / 180 / 3600      # km on the Moon per arcsec per km of distance
+MAX_SCALE_STEP = 1.10     # unknown optics: no scale is more than ~5 % from a searched one (10 % off loses the place)
 
 
 # ---------------------------------------------------------------- optics
@@ -44,7 +47,9 @@ def drizzle_factor(name):
 
 
 def setups():
-    return [dict(extender=e, magnification=f, camera=c, pixel_um=p) for e, f in EXTENDERS for c, p in CAMERAS]
+    """Every extender × camera × binning; pixel_um is the binned pixel."""
+    return [dict(extender=e, magnification=f, camera=c, pixel_um=p * b, binning=bn if b != 1 else None)
+            for e, f in EXTENDERS for c, p in CAMERAS for bn, b in BINNINGS]
 
 
 def arcsec_per_px(s, drizzle=1.0):
@@ -52,7 +57,8 @@ def arcsec_per_px(s, drizzle=1.0):
 
 
 def optics_text(s):
-    return f"{TELESCOPE[0]} · {s['extender']} · {s['camera']} ({TELESCOPE[1] * s['magnification']:.0f} mm, {arcsec_per_px(s):.3f}″/px)"
+    cam = s['camera'] + (f" {s['binning']} binned" if s.get('binning') else '')
+    return f"{TELESCOPE[0]} · {s['extender']} · {cam} ({TELESCOPE[1] * s['magnification']:.0f} mm, {arcsec_per_px(s):.3f}″/px)"
 
 
 def load_optics(folder):
@@ -86,9 +92,17 @@ def ask_optics(folder, log=print):
     if not (ci.isdigit() and 1 <= int(ci) <= len(CAMERAS) and ei.isdigit() and 1 <= int(ei) <= len(EXTENDERS)):
         log(f'optics not given: trying all {len(setups())} setups')
         return None
+    bn, b = BINNINGS[0]
+    if len(BINNINGS) > 1:
+        for i, (n, _) in enumerate(BINNINGS, 1):
+            print(f'  {i}  {n}')
+        bi = input(f'binning [1-{len(BINNINGS)}, empty = {bn}]: ').strip()
+        if bi.isdigit() and 1 <= int(bi) <= len(BINNINGS):
+            bn, b = BINNINGS[int(bi) - 1]
     c, p = CAMERAS[int(ci) - 1]
     e, f = EXTENDERS[int(ei) - 1]
-    s = dict(telescope=TELESCOPE[0], focal_mm=TELESCOPE[1] * f, extender=e, magnification=f, camera=c, pixel_um=p)
+    s = dict(telescope=TELESCOPE[0], focal_mm=TELESCOPE[1] * f, extender=e, magnification=f, camera=c, pixel_um=p * b,
+             binning=bn if b != 1 else None)
     s['text'] = optics_text(s)
     with open(os.path.join(folder, OPTICS_FILE), 'w') as fh:
         json.dump(s, fh, indent=1)
@@ -219,6 +233,16 @@ def distinct(cands, keep, dist):
     return out
 
 
+def per_scale(cands, km_list, keep, dist, least):
+    """distinct() within each scale, then every scale's best, every scale's second, … (each rank by score).
+    Ranked across scales by raw score, a small view (few pixels) wins with a chance peak over the true place at a
+    slightly wrong scale: a 1840 px close-up at 0.22 km/px is 40 px wide at 4.8 km/px, and its best noise peak beat
+    the real place at 0.50 km/px (8 % off its true 0.54, still verified by 144 matches)."""
+    n = max(least, math.ceil(keep / len(km_list)))
+    lists = [distinct([c for c in cands if c['km'] == km], n, dist) for km in km_list]
+    return [c for r in range(n) for c in sorted((l[r] for l in lists if len(l) > r), key=lambda c: -c['score'])]
+
+
 def blind_search_full(gray, km_list, lat0, lon0, sun, relief, ref, log, work_km=2.4, angle_step=4, keep=12):
     """Every view at work_km and angle_step against the whole hemisphere: candidates (score, km_per_px, angle, mirror,
     ref centre px) of the close-up. Thorough and slow (reference for blind_search)."""
@@ -267,7 +291,7 @@ def blind_search(gray, km_list, lat0, lon0, sun, relief, ref, log, work_km=2.4, 
                 coarse.append(dict(meta, score=float(mx), tl=tl))
             log(f'  search: {done}/{n_total} coarse views ({km:.3f} km/px, {"mirrored" if mirror else "not mirrored"}), '
                 f'best so far {max((cc["score"] for cc in coarse), default=0):.3f}, {time.perf_counter() - t0:.0f} s')
-    places = distinct(coarse, coarse_keep, 10)
+    places = per_scale(coarse, km_list, coarse_keep, 10, 3)
     rn, geo_w = work_reference(lat0, lon0, sun, relief, ref, work_km)
     k = coarse_km / work_km
     fine = []
@@ -287,7 +311,7 @@ def blind_search(gray, km_list, lat0, lon0, sun, relief, ref, log, work_km=2.4, 
         if (i + 1) % 10 == 0 or i + 1 == len(places):
             log(f'  search: refined {i + 1}/{len(places)} places, best {max((cc["score"] for cc in fine), default=0):.3f}, '
                 f'{time.perf_counter() - t0:.0f} s')
-    return distinct(fine, keep, 20), geo_w
+    return per_scale(fine, km_list, keep, 20, 2), geo_w
 
 
 def solve_hit(c, geo_w):
@@ -330,14 +354,23 @@ def verify(gray, geo, relief, ref, sun, target_px=1100, fixed=True):
 
 
 def km_candidates(path, optics, dist_km):
+    """(km per px, setup) to search, finest first. Known optics: nominal ± 10 % (a focal extender's real factor
+    depends on the spacing). Unknown: every setup's scale, near-equal ones (< 5 % apart) merged and gaps wider than
+    MAX_SCALE_STEP filled (setup None), since the search loses a place whose scale is ~10 % off."""
     drz = drizzle_factor(path)
-    todo = [optics] if optics else setups()
+    to_km = dist_km * KM_PER_ARCSEC_PER_KM
+    if optics:
+        base = arcsec_per_px(optics, drz) * to_km
+        return [(base * f, optics) for f in (0.9, 1.0, 1.1)]
     out = []
-    for o in todo:
-        base = arcsec_per_px(o, drz) * dist_km * KM_PER_ARCSEC_PER_KM
-        # a focal extender's real factor depends on the spacing: ± 10 % around the nominal value
-        for f in ((0.9, 1.0, 1.1) if optics else (1.0,)):
-            out.append((base * f, o))
+    for km, o in sorted(((arcsec_per_px(o, drz) * to_km, o) for o in setups()), key=lambda t: t[0]):
+        if out:
+            prev = out[-1][0]
+            if km / prev < 1.05:
+                continue
+            steps = math.ceil(math.log(km / prev) / math.log(MAX_SCALE_STEP))
+            out += [(prev * (km / prev) ** (i / steps), None) for i in range(1, steps)]
+        out.append((km, o))
     return out
 
 
@@ -354,50 +387,81 @@ def locate_closeup(path, log=print, optics=None, when=None):
     sun = (eph['sub_sun_lat'], eph['sub_sun_lon'])
     log(f"capture {when:%Y-%m-%d %H:%M} UTC: libration {lat0:+.2f}° {lon0:+.2f}°, colongitude {eph['colongitude']:.1f}°, "
         f"Earth–Moon {eph['distance_km']:.0f} km")
-    optics = optics if optics is not None else ask_optics(os.path.dirname(os.path.abspath(path)), log)
-    kms = [(km, o) for km, o in km_candidates(path, optics, eph['distance_km']) if W * km < 2600]
-    if not kms:
-        raise SystemExit('no optics setup gives a close-up at this image size')
-    log(f"{len(kms)} candidate scales {min(k for k, _ in kms):.3f}–{max(k for k, _ in kms):.3f} km/px "
-        + (f"({optics['text']})" if optics else f"(all {len(setups())} setups)"))
+    folder = os.path.dirname(os.path.abspath(path))
+    optics = optics if optics is not None else ask_optics(folder, log)
+    had_optics = optics is not None
     relief16, relief64, ref = Relief(16, log), Relief(64, log), Reference(log)
-    cands, geo_w = blind_search(gray, [k for k, _ in kms], lat0, lon0, sun, relief16, ref, log)
-    best = None
-    for i, c in enumerate(cands):
-        geo = solve_hit(c, geo_w)
-        n, g, rms = verify(gray, geo, relief64, ref, sun)
-        la, lo, okc = geo.to_latlon(W / 2, H / 2)
-        log(f"  candidate {i + 1}: score {c['score']:.3f}, {c['km']:.3f} km/px, {c['angle']}°"
-            f"{', mirrored' if c['mirror'] else ''}, centre {float(la):+.1f}° {float(lo):+.1f}° → {n} terrain matches")
-        if n and (best is None or n > best[0]):
-            best = (n, g, rms, c)
-        if n >= 60:
-            break
-    if best is None or best[0] < 15:
-        raise SystemExit(f'close-up not found: the best position had {best[0] if best else 0} terrain matches')
-    n, geo, rms, c = best
-    # refine at full resolution (or 2400 px): patches against the 64 px/deg relief, affine with libration held
-    n2, g2, rms2 = verify(gray, geo, relief64, ref, sun, target_px=min(2400, max(H, W)))
-    if n2 >= max(15, n // 2):
-        geo, n, rms = g2, n2, rms2
+
+    def fits(n, rms):
+        return n >= 15 and rms is not None and rms <= MAX_CLOSEUP_RMS_PX
+
+    def search(optics):
+        """((matches, geometry, rms, hit, n candidates), None) for the best fit that passes both gates, else
+        (None, why)."""
+        kms = [km for km, _ in km_candidates(path, optics, eph['distance_km']) if W * km < 2600]
+        if not kms:
+            return None, 'no optics setup gives a close-up at this image size'
+        log(f"{len(kms)} candidate scales {kms[0]:.3f}–{kms[-1]:.3f} km/px "
+            + (f"({optics['text']})" if optics else f"(all {len(setups())} setups)"))
+        cands, geo_w = blind_search(gray, kms, lat0, lon0, sun, relief16, ref, log)
+        best, worst = None, (0, None)
+        for i, c in enumerate(cands):
+            geo = solve_hit(c, geo_w)
+            n, g, rms = verify(gray, geo, relief64, ref, sun)
+            la, lo, _ = geo.to_latlon(W / 2, H / 2)
+            log(f"  candidate {i + 1}: score {c['score']:.3f}, {c['km']:.3f} km/px, {c['angle']}°"
+                f"{', mirrored' if c['mirror'] else ''}, centre {float(la):+.1f}° {float(lo):+.1f}° → {n} terrain matches"
+                + (f", {rms:.1f} px rms" if rms is not None else ''))
+            if not fits(n, rms):
+                worst = max(worst, (n, rms), key=lambda t: t[0])
+                continue
+            if best is None or n > best[0]:
+                best = (n, g, rms, c)
+            if n >= 60:
+                break
+        if best is None:
+            n, rms = worst
+            return None, (f'close-up not found: the best position had {n} terrain matches'
+                          + (f' but {rms:.1f} px rms — too poor a fit to trust' if n >= 15 and rms is not None else ''))
+        n, geo, rms, c = best
+        # refine at full resolution (or 2400 px): patches against the 64 px/deg relief, affine with libration held
+        n2, g2, rms2 = verify(gray, geo, relief64, ref, sun, target_px=min(2400, max(H, W)))
+        if n2 >= max(15, n // 2) and fits(n2, rms2):
+            geo, n, rms = g2, n2, rms2
+        return (n, geo, rms, c, len(cands)), None
+
+    found, why = search(optics)
+    if found is None and had_optics:
+        # the folder's optics are one night's setup: a frame binned, or with another extender, is at another scale
+        log(f"{why} at the scale of {OPTICS_FILE} ({optics['text']}): trying every setup")
+        optics = None
+        found, why = search(None)
+    if found is None:
+        raise SystemExit(why)
+    n, geo, rms, c, n_cands = found
     la, lo, _ = geo.to_latlon(W / 2, H / 2)
     if optics is None:
-        # the fitted scale tells which setup it was: saved for the folder, so its next images search 3 scales, not 10
+        # the fitted scale tells which setup it was: saved for the folder (unless it has its own), so its next images
+        # search 3 scales, not all
         arcsec = geo.km_per_px / (eph['distance_km'] * KM_PER_ARCSEC_PER_KM) * drizzle_factor(path)
         best_s = min(setups(), key=lambda o: abs(math.log(arcsec_per_px(o) / arcsec)))
         if abs(math.log(arcsec_per_px(best_s) / arcsec)) < 0.12:
             o = dict(telescope=TELESCOPE[0], focal_mm=TELESCOPE[1] * best_s['magnification'], **best_s,
                      detected_from=os.path.basename(path), measured_arcsec_per_px=round(arcsec, 4))
             o['text'] = optics_text(o)
-            try:
-                with open(os.path.join(os.path.dirname(os.path.abspath(path)), OPTICS_FILE), 'w') as fh:
-                    json.dump(o, fh, indent=1)
-                log(f"optics recognised from the scale ({arcsec:.3f}″/px): {o['text']} · saved {OPTICS_FILE}")
+            if had_optics:
+                log(f"optics recognised from the scale ({arcsec:.3f}″/px): {o['text']} · {OPTICS_FILE} left as it is")
                 optics = o
-            except OSError:
-                pass
+            else:
+                try:
+                    with open(os.path.join(folder, OPTICS_FILE), 'w') as fh:
+                        json.dump(o, fh, indent=1)
+                    log(f"optics recognised from the scale ({arcsec:.3f}″/px): {o['text']} · saved {OPTICS_FILE}")
+                    optics = o
+                except OSError:
+                    pass
     q = dict(matches=int(n), rms_px=round(float(rms), 2), cv_rms_px=None, correction_degree=0, closeup=True,
-             search_score=round(c['score'], 3), orientation_candidates=len(cands),
+             search_score=round(c['score'], 3), orientation_candidates=n_cands,
              optics=optics['text'] if optics else None, capture_utc=when.strftime('%Y-%m-%d %H:%M:%S'),
              centre_latlon=[round(float(la), 3), round(float(lo), 3)], seconds=round(time.perf_counter() - t0, 1),
              width=W, height=H, limb_radius_px=None, orientation_score=None, other_mirror_score=None)

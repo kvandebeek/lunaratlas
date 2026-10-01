@@ -783,18 +783,39 @@ const J = {
     await ok(await b.text('#fname') === args.image.split(/[\\/]/).pop(), `a click on the drop zone and a chosen file show its name (${await b.text('#fname')})`);
     await ok(/MB/.test(await b.text('#fsize')), `and its size (${await b.text('#fsize')})`);
     await ok(await b.visible('#when'), 'a name without a capture time asks for one');
+    // Record the stage/bar high-water mark INSIDE the page's own render path, not by sampling the DOM from
+    // outside on a timer: the page can update the bar and navigate away in the very same task (app.js's poll()
+    // renders the final state and sets location.href in one synchronous run), so an external 250 ms poll can
+    // land entirely between two renders and never observe an in-between state -- a real race, confirmed by
+    // reproducing it with the fitted-circle timing of a fast synthetic locate, not merely theorized (BUG-22).
+    // sessionStorage survives the same-origin navigation to the viewer, so the figure is read back below
+    // instead of raced for.
+    await b.js(`(function () {
+      const orig = window.renderStages;
+      window.renderStages = function () {
+        orig();
+        try {
+          const done = document.querySelectorAll('#stages li.done').length;
+          const bar = +document.getElementById('bar').getAttribute('aria-valuenow') || 0;
+          const prev = JSON.parse(sessionStorage.getItem('la_test_progress') || '{"done":0,"bar":0}');
+          sessionStorage.setItem('la_test_progress',
+            JSON.stringify({ done: Math.max(prev.done, done), bar: Math.max(prev.bar, bar) }));
+        } catch (e) { /* no storage: the journey still passes on the other assertions */ }
+      };
+    })()`);
     await b.choose('#when', '2026-09-20T21:30');
     await b.click('#go');
     await ok(await b.visible('#work'), '"Find the names" shows the progress');
-    let maxDone = 0, sawBar = 0;
     const t0 = Date.now();
     while (Date.now() - t0 < 240000) {
-      const st = await b.js(`location.pathname === '/' ? 'viewer' : [document.querySelectorAll('#stages li.done').length, +document.getElementById('bar').getAttribute('aria-valuenow') || 0, document.getElementById('werr').hidden ? '' : document.getElementById('werr').textContent]`).catch(() => 'navigating');
+      const st = await b.js(`location.pathname === '/' ? 'viewer' : (document.getElementById('werr').hidden ? '' : document.getElementById('werr').textContent)`).catch(() => 'navigating');
       if (st === 'viewer') break;
-      if (Array.isArray(st)) { maxDone = Math.max(maxDone, st[0]); sawBar = Math.max(sawBar, st[1]); if (st[2]) { await ok(false, 'the locate failed: ' + st[2]); return; } }
+      if (st) { await ok(false, 'the locate failed: ' + st); return; }
       await sleep(250);
     }
-    await ok(maxDone >= 2 && sawBar > 10, `the stages tick off and the bar moves (${maxDone} stages done, bar at ${sawBar} %)`);
+    const progress = await b.js(`JSON.parse(sessionStorage.getItem('la_test_progress') || '{"done":0,"bar":0}')`).catch(() => ({ done: 0, bar: 0 }));
+    await ok(progress.done >= 2 && progress.bar > 10,
+            `the stages tick off and the bar moves (${progress.done} stages done, bar at ${progress.bar} %)`);
     await b.until(ready, 30000, 'the viewer');
     await ok(true, 'when it is found, the viewer opens by itself with the names');
     await ok(await b.visible('#otherImage'), 'the viewer has a way back to the launcher');
@@ -830,6 +851,87 @@ const J = {
     await ok(await b.visible('#drop'), 'and the drop zone stays');
   },
 
+  // ---------------------------------------------------------------- deterministic progress rendering
+  // (bugs-overview BUG-22): a controlled status sequence fed straight into app.js's own render path, with no
+  // server, no real locate, and no timing involved at all -- the "launch" journey above still exercises the
+  // real end-to-end locate (upload, positioning, navigation, sidecar, names, recent row, thumbnail), but no
+  // longer needs to also prove progress rendering by sampling the DOM against a race it cannot win.
+  async progressStages(b, ok) {
+    await b.goto(BASE + '/app');
+    await b.until(`document.getElementById('folder').textContent.length > 0`, 5000, 'the work folder');
+    const snaps = await b.js(`(function () {
+      working('Finding where this is on the Moon');
+      const snap = () => ({
+        done: document.querySelectorAll('#stages li.done').length,
+        active: (document.querySelector('#stages li.active') || {}).dataset ? document.querySelector('#stages li.active').dataset.id : null,
+        bar: +document.getElementById('bar').getAttribute('aria-valuenow') || 0,
+      });
+      const out = [];
+      const sequence = [
+        ['loading', []],
+        ['date', ['capture 2026-09-20 19:30 UTC']],
+        ['searching', ['searching the image as a close-up', 'search: 3/10 views']],
+        ['refining', ['result: 42 matches, 1.20 px rms']],
+      ];
+      for (const [label, lines] of sequence) {
+        readLines(lines);
+        toStage(st.i);
+        renderStages();
+        out.push([label, snap()]);
+      }
+      toStage(5); renderStages();                            // 'opening'
+      out.push(['opening', snap()]);
+      return out;
+    })()`);
+    const byLabel = Object.fromEntries(snaps);
+    await ok(byLabel.loading.done === 0 && byLabel.loading.active === 'load',
+            `loading: the first stage is active, nothing done yet (${JSON.stringify(byLabel.loading)})`);
+    await ok(byLabel.date.done >= 1, `date: the loading stage is marked done (${JSON.stringify(byLabel.date)})`);
+    // "Downloading Moon maps" shows as skipped, not done, when nothing was ever downloaded (st.maps stays
+    // false): done counts load+date (2) once searching is the active stage, not 3
+    await ok(byLabel.searching.done >= 2 && byLabel.searching.active === 'search' && byLabel.searching.bar > 10,
+            `searching: the stage and the bar both advance from a scripted log line (${JSON.stringify(byLabel.searching)})`);
+    await ok(byLabel.refining.done >= 3 && byLabel.refining.active === 'refine',
+            `refining: the fit stage is reached (${JSON.stringify(byLabel.refining)})`);
+    await ok(byLabel.opening.done >= 4 && byLabel.opening.active === 'done',
+            `opening: every earlier stage is done, "Opening the viewer" is now active (${JSON.stringify(byLabel.opening)})`);
+    const failed = await b.js(`(function () {
+      fail('a synthetic failure for this journey only');
+      return { failed: document.getElementById('bar').classList.contains('failed'),
+              title: document.getElementById('wtitle').textContent,
+              stopHidden: document.getElementById('stop').hidden };
+    })()`);
+    await ok(failed.failed, `a scripted failure marks the bar failed, deterministically (${JSON.stringify(failed)})`);
+    await ok(failed.title.length > 3, 'and shows a title');
+    // the photo being worked on: nothing without a file or a path, the server's own thumbnail and the file's name
+    // once there is a path, the browser's own copy of a small JPEG before the upload answers, and no empty frame
+    // left behind by one that cannot be shown
+    await b.js(`path = null; file = null; showPhoto();`);
+    await ok(await b.js(`document.getElementById('wthumb').hidden`), 'no thumbnail box without a file or a path');
+    await b.js(`path = ${JSON.stringify(args.image)}; showPhoto();`);
+    await b.until(`(() => { const i = document.getElementById('wimg'); return !document.getElementById('wthumb').hidden && i.complete && i.naturalWidth > 0; })()`,
+                  10000, 'the thumbnail of the photo being worked on');
+    const named = await b.js(`document.getElementById('wname').textContent`);
+    await ok(named === args.image.split('/').pop(), `and the name of that photo beside it ("${named}")`);
+    await b.js(`(function () {                     // a small JPEG, as chosen from disk before the upload answers
+      const c = document.createElement('canvas'); c.width = c.height = 8;
+      return new Promise((r) => c.toBlob((blob) => { file = new File([blob], 'chosen.jpg'); path = null; showPhoto(); r(1); }, 'image/jpeg'));
+    })()`);
+    await b.until(`(() => { const i = document.getElementById('wimg'); return i.src.startsWith('blob:') && i.complete && i.naturalWidth > 0; })()`,
+                  5000, 'the chosen file previewed from the browser itself');
+    await ok(await b.text('#wname') === 'chosen.jpg', 'a photo still uploading is named from the file the user chose');
+    await b.js(`(function () {                     // what a TIFF gets: no browser decodes one, so no box at all
+      file = new File([new Uint8Array(64)], 'mosaic.tif'); path = null; showPhoto();
+    })()`);
+    await ok(await b.js(`document.getElementById('wthumb').hidden`), 'a TIFF gets no local preview: the browser cannot decode one');
+    await b.js(`path = '/not/an/image/in/the/work/folder.tif'; showPhoto();`);
+    await b.until(`document.getElementById('wthumb').hidden`, 10000, 'the empty frame gone');
+    await ok(true, 'a thumbnail the server cannot make leaves no empty frame, and the name stays');
+    await ok(await b.js(`document.getElementById('wname').textContent.length > 0`), 'the name of a photo that cannot be shown is still there');
+    await b.js(`fail('a synthetic failure')`);
+    await ok((await b.text('#wname')).length > 0, 'a failure keeps the name of the photo it is about');
+  },
+
   async cancel(b, ok) {
     await b.goto(BASE + '/app');
     await b.chooseFile('#drop', [args.image]);
@@ -855,8 +957,7 @@ const J = {
     await ok(title.length > 3 && !/Working|Finding/.test(title), `a photo without the Moon ends in a plain-language error ("${title}")`);
     await ok(await b.visible('#again') && !(await b.visible('#stop')), 'with "Choose another photo" instead of Cancel');
     await ok(await b.js(`document.getElementById('bar').classList.contains('failed')`), 'and the bar marked as failed');
-    await b.click('#work details summary');
-    await ok(await b.visible('#log') && (await b.text('#log')).length > 20, 'Details shows the log');
+    await ok(await b.visible('#log') && (await b.text('#log')).length > 20, 'Details shows the log, open from the start');
     await b.grantClipboard(BASE);
     await b.click('#copy');
     const said = await b.text('#copy');

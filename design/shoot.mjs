@@ -90,7 +90,10 @@ const L1 = ['positioning 2026-09-27-2040_2-Moon__lapl4_ap5501.tif', 'locating 20
 const L2 = ['positioning 2026-09-27-2040_2-Moon__lapl4_ap5501.tif', 'locating 2026-09-27-2040_2-Moon__lapl4_ap5501.tif',
   'quality OK (provisional limits) · limb 6.5 px (4.31 km) · grain 0.2 % · clipped 0.00 %', 'limb: centre 2311 1768 px, radius 1583 px',
   'orientation: north 184.2°, not mirrored', '  reference: LOLA relief lit from the subsolar point +1.2° -38.5°'];
-const sim = (lines, secs) => `(() => { working('Finding where this is on the Moon'); t0 = Date.now() - ${secs * 1000}; st.since = Date.now() - 4000;
+// the progress states are driven with a realistic log, against a real photo in the work folder so the header
+// shows its thumbnail and name as it does in use
+const PHOTO = join(WORK, '2026-09-27-2040_2-Moon__lapl4_ap5501.tif');
+const sim = (lines, secs) => `(() => { path = ${JSON.stringify(PHOTO)}; working('Finding where this is on the Moon'); t0 = Date.now() - ${secs * 1000}; st.since = Date.now() - 4000;
   const lines = ${JSON.stringify(lines)}; $('#log').textContent = lines.join('\\n'); const b = st.i; readLines(lines); const i = st.i; st.i = b; toStage(i); st.since = Date.now() - 5000; tick(); renderStages(); })()`;
 
 try {
