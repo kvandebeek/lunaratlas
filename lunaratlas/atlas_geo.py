@@ -37,7 +37,8 @@ SIDECAR_SCHEMA = 'lunaratlas.geo/1'
 OLD_SCHEMAS = ('moon_atlas.geo/1',)       # the same format, written before the rename; still read
 REF_TILES = {'E300N3150': (0, 0), 'E300N0450': (0, 90), 'E300S3150': (60, 0), 'E300S0450': (60, 90)}
 REF_URL = 'https://pds.lroc.im-ldi.com/data/LRO-L-LROC-5-RDR-V1.0/LROLRC_2001/EXTRAS/BROWSE/WAC_EMP'
-DOWNLOAD_HOSTS = {'pds.lroc.im-ldi.com', 'pds-geosciences.wustl.edu', 'asc-planetarynames-data.s3.us-west-2.amazonaws.com',
+DOWNLOAD_HOSTS = {'pds.lroc.im-ldi.com', 'pds.mcp.nasa.gov', 'pds-geosciences.wustl.edu',
+                  'asc-planetarynames-data.s3.us-west-2.amazonaws.com',
                   'api.github.com', 'raw.githubusercontent.com'}                       # the only hosts anything is fetched from
 REF_SHA256 = {'E300N3150': '422615a7d4e7707f8be828a3a5b05797d5fbdaf93a374405f2e308aff2c16651',      # fixed archive products:
               'E300N0450': 'aef55c19918daa8b96bcf045b75f589222b0940e0634500decc028776e1d8bbb',
