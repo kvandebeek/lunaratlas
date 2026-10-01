@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tool_settings as ts  # noqa: E402
 from atlas_geo import (NoUsableLimb, fit_limb, image_signature, load_geo, locate, north_up, resize,   # noqa: E402
                        resolve_sidecar, save_geo, sidecar_path, unresize, write_atomic, write_json_atomic, R_MOON)
-from atlas_paths import IMAGE_EXT, is_export_name                        # noqa: E402
+from atlas_paths import IMAGE_EXT, cv_imread, cv_imwrite, is_export_name  # noqa: E402
 from atlas_names import load_features                                    # noqa: E402
 from atlas_quality import luminance, measure, thresholds, verdict                   # noqa: E402
 from atlas_render import (DEFAULT_FONT, LAYERS, Fonts, box_of, capture_time, draw, grid_overlay, info_block,  # noqa: E402
@@ -51,7 +51,7 @@ def log(*a):
 
 def quality_gate(image):
     """Quality measures on the pixels (and the limb, when one is found): (ok, reasons, line, measures)."""
-    raw = cv2.imread(image, cv2.IMREAD_UNCHANGED)
+    raw = cv_imread(image, cv2.IMREAD_UNCHANGED)
     if raw is None:
         raise SystemExit(f'cannot read {image}')
     if raw.ndim == 3 and raw.shape[2] == 4:
@@ -496,7 +496,7 @@ def cmd_export(a):
     if (a.around or a.region) and (sw < 1 or sh < 1):
         raise SystemExit('the view width and height must be at least 1 px')
 
-    raw = cv2.imread(a.image, cv2.IMREAD_UNCHANGED)
+    raw = cv_imread(a.image, cv2.IMREAD_UNCHANGED)
     if raw is None:
         raise SystemExit(f'cannot read {a.image}')
     geo = geometry(a.image, force=a.force, when=when_of(a))
@@ -626,7 +626,7 @@ def cmd_export(a):
     params = {'jpg': [cv2.IMWRITE_JPEG_QUALITY, a.quality], 'png': [cv2.IMWRITE_PNG_COMPRESSION, 3]}.get(fmt, [cv2.IMWRITE_TIFF_COMPRESSION, 1])
 
     def write(tmp):                                  # through a temporary file: an export never appears half written
-        if not cv2.imwrite(tmp, img, params):
+        if not cv_imwrite(tmp, img, params):
             raise OSError('the image encoder refused it')
     write_atomic(out, write)
     write_export_manifest(a.image, out, a, fmt)    # published only now: a crash before this leaves no fresh record

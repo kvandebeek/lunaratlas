@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from atlas_paths import DATA, file_lock, publish, temp_beside  # noqa: E402  (lunaratlas/data, or the app's data folder)
+from atlas_paths import DATA, cv_imread, cv_imwrite, file_lock, publish, temp_beside  # noqa: E402  (lunaratlas/data, or the app's data folder)
 R_MOON = 1737.4           # km
 DIST = 221.0              # Earth-Moon distance in lunar radii (perspective; 205-234 over the orbit)
 PPD = 64                  # reference map pixels per degree
@@ -306,12 +306,12 @@ class Reference:
 
     def __init__(self, log=print):
         cache = os.path.join(DATA, 'wac_emp_643_nearside.png')
-        ref = cv2.imread(cache, cv2.IMREAD_GRAYSCALE) if os.path.exists(cache) else None
+        ref = cv_imread(cache, cv2.IMREAD_GRAYSCALE) if os.path.exists(cache) else None
         if ref is None or ref.shape != self.SHAPE:
             ref = self._assemble(log)
 
             def write(p):
-                if not cv2.imwrite(p, ref):
+                if not cv_imwrite(p, ref):
                     raise OSError(f'cannot write {p}')
             write_atomic(cache, write)
         self.levels = [ref]
@@ -320,7 +320,7 @@ class Reference:
 
     @staticmethod
     def _tile(path):
-        im = cv2.imread(path, cv2.IMREAD_GRAYSCALE) if os.path.exists(path) else None
+        im = cv_imread(path, cv2.IMREAD_GRAYSCALE) if os.path.exists(path) else None
         return im if im is not None and im.shape == (60 * PPD, 90 * PPD) else None
 
     @classmethod
@@ -373,7 +373,7 @@ def unresize(p, sx, sy):
 
 def load_gray(path):
     """Any 8/16-bit mono or colour image -> float32 luminance, plus the raw array."""
-    raw = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    raw = cv_imread(path, cv2.IMREAD_UNCHANGED)
     if raw is None:
         raise SystemExit(f'cannot read image: {path}')
     g = raw

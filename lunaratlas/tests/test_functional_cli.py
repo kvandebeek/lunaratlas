@@ -571,8 +571,8 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         from unittest import mock
         img, geo = S.moon_image(self.tmp, name='full.tif')
         raw = cv2.imread(img, cv2.IMREAD_UNCHANGED)
-        real = cv2.imwrite
-        with mock.patch.object(av.cv2, 'imwrite', lambda p, *a: False if p.endswith('1_0.jpg') else real(p, *a)):
+        real = av.cv_imwrite
+        with mock.patch.object(av, 'cv_imwrite', lambda p, *a: False if p.endswith('1_0.jpg') else real(p, *a)):
             with self.assertRaises(SystemExit) as cm:
                 av.build_tiles(img, raw, S.quiet)
         self.assertIn('could not be written', str(cm.exception))
@@ -584,14 +584,14 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         side = S.sidecar(img)
         first = av.Session(img, geo, side, None, S.quiet)              # the first open reads the file
         reads = []
-        real = cv2.imread
-        with mock.patch.object(av.cv2, 'imread', lambda p, *a: reads.append(p) or real(p, *a)):
+        real = av.cv_imread
+        with mock.patch.object(av, 'cv_imread', lambda p, *a: reads.append(p) or real(p, *a)):
             again = av.Session(img, geo, side, None, S.quiet)
         self.assertEqual(reads, [], 'tiles and night side come from the cache: the pixels are not read')
         self.assertEqual(again.data['features'], first.data['features'])
         self.assertEqual((again.data['width'], again.data['height']), (1100, 1000))
         geo2 = ag.Geometry(geo.lat0 + 1.0, geo.lon0, geo.A, geo.t)     # another positioning: the night side is worked out again
-        with mock.patch.object(av.cv2, 'imread', lambda p, *a: reads.append(p) or real(p, *a)):
+        with mock.patch.object(av, 'cv_imread', lambda p, *a: reads.append(p) or real(p, *a)):
             av.Session(img, geo2, side, None, S.quiet)
         self.assertEqual(len(reads), 1)
 

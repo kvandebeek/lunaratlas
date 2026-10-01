@@ -196,8 +196,15 @@ def write_image(path, img01=None, dtype=np.uint16, channels=1, params=(), **kw):
     px = encode(img01, dtype, channels)
     if channels == 4 and dtype == np.uint8 and path.lower().endswith('.png'):
         px[..., 3] = 255
-    if not cv2.imwrite(path, px, list(params)):
-        raise OSError(f'cannot write {path}')
+    # cv2.imwrite(path, ...) opens the path itself, and on Windows that goes through OpenCV's own ANSI-codepage
+    # path handling, not Python's: a non-ASCII name (accented, "my moon é.tif") is mojibake'd into a different
+    # file, so the test never finds what it just wrote. Encode in memory and let Python's own open() (Unicode-
+    # correct on every platform) write the bytes instead.
+    ok, buf = cv2.imencode(os.path.splitext(path)[1], px, list(params))
+    if not ok:
+        raise OSError(f'cannot encode {path}')
+    with open(path, 'wb') as fh:
+        fh.write(buf.tobytes())
     return geo if geo is not None else truth_geometry(**kw)
 
 
@@ -207,7 +214,8 @@ GATE_OK = dict(ok=True, forced=False, reasons=[], line='quality OK (test fixture
 def locate_as(image, geo, gate=None, **extra):
     """A sidecar for image holding geo, as `lunaratlas.py locate` would write it (no locating)."""
     from atlas_geo import save_geo
-    raw = cv2.imread(image, cv2.IMREAD_UNCHANGED)
+    from atlas_paths import cv_imread
+    raw = cv_imread(image, cv2.IMREAD_UNCHANGED)
     q = dict(matches=500, rms_px=0.2, cv_rms_px=0.2, correction_degree=geo.deg, seconds=1.0,
              orientation_score=0.9, other_mirror_score=0.2, orientation_candidates=1, limb_radius_px=geo.radius_px)
     q.update(extra.pop('quality', {}))

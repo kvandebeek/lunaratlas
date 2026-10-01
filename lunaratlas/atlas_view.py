@@ -33,8 +33,8 @@ import numpy as np
 from atlas_geo import (DATA, PPD, R_MOON, Reference, image_signature, load_geo, resolve_sidecar, sidecar_path,
                        sky_to_latlon, unit, write_json_atomic)
 from atlas_names import load_features
-from atlas_paths import (CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, file_lock, private_dir, self_command,
-                         temp_beside, user_dir)
+from atlas_paths import (CACHE as CACHE_ROOT, FONTS as BUNDLED_FONTS, cv_imread, cv_imwrite, file_lock, private_dir,
+                         self_command, temp_beside, user_dir)
 from atlas_render import BUNDLED, FONT_DIR, Fonts, clean_label_override, clean_shapes, light_levels, rim_polygons
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -155,7 +155,7 @@ def tiles_complete(d, levels):
 
 
 def read_image(image):
-    raw = cv2.imread(image, cv2.IMREAD_UNCHANGED)
+    raw = cv_imread(image, cv2.IMREAD_UNCHANGED)
     if raw is None:
         raise SystemExit(f'cannot read {image}')
     return raw
@@ -220,9 +220,9 @@ def build_tiles(image, load_raw, log):
             except OSError as e:
                 raise SystemExit(f'cannot write the tile cache {ld}: {e.strerror or e}') from None
             jobs = [(r, c) for r in range(rows) for c in range(cols)]
-            done = list(ex.map(lambda rc: cv2.imwrite(os.path.join(ld, f'{rc[1]}_{rc[0]}.jpg'),
-                                                      g[rc[0] * TILE:(rc[0] + 1) * TILE, rc[1] * TILE:(rc[1] + 1) * TILE],
-                                                      [cv2.IMWRITE_JPEG_QUALITY, 86]), jobs))
+            done = list(ex.map(lambda rc: cv_imwrite(os.path.join(ld, f'{rc[1]}_{rc[0]}.jpg'),
+                                                     g[rc[0] * TILE:(rc[0] + 1) * TILE, rc[1] * TILE:(rc[1] + 1) * TILE],
+                                                     [cv2.IMWRITE_JPEG_QUALITY, 86]), jobs))
             if not all(done):                                        # a full disk: no manifest for a pyramid with holes
                 raise SystemExit(f'cannot write the tile cache {ld}: {done.count(False)} tiles could not be written '
                                  '(is the disk full?)')
@@ -336,7 +336,7 @@ def moon_disk(geo, sun=None, px=DISK_PX):
     the viewer must never download 44 MB just to draw a background."""
     p = os.path.join(DATA, 'wac_emp_643_nearside.png')
     try:
-        ref = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+        ref = cv_imread(p, cv2.IMREAD_GRAYSCALE)
     except Exception:                                        # noqa: BLE001  (a damaged map is just no background)
         ref = None
     if ref is None or ref.shape != Reference.SHAPE:

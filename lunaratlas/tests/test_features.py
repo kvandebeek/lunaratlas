@@ -468,7 +468,7 @@ class Batch(S.TempDir):
         """A failed export must leave no fresh manifest to be skipped over next time (bugs-overview BUG-11)."""
         img = os.path.join(self.folder, 'a_moon.tif')
         out = os.path.join(self.folder, 'a_moon_atlas.jpg')
-        with mock.patch.object(cv2, 'imwrite', return_value=False):   # the encoder refused it: write_atomic's
+        with mock.patch.object(cv2, 'imencode', return_value=(False, None)):   # the encoder refused it: write_atomic's
             code1, out1 = S.run_main('export', img, '-o', out, '--format', 'jpg')   # own OSError -> SystemExit
         self.assertIsNotNone(code1)
         self.assertFalse(os.path.exists(out + '.export.json'))

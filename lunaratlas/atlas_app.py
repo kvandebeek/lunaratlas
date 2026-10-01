@@ -30,7 +30,8 @@ import numpy as np
 
 from atlas_ephem import SHARPCAP
 from atlas_geo import load_geo, sha256_file, sidecar_path
-from atlas_paths import CACHE, IMAGE_EXT, _UMASK, is_export_name, private_dir, publish, self_command, temp_beside, user_dir
+from atlas_paths import (CACHE, IMAGE_EXT, _UMASK, cv_imread, is_export_name, private_dir, publish, self_command,
+                         temp_beside, user_dir)
 from atlas_view import PAGE, ExportJob, Server, Session, handoff_url, reveal, run_server, start_server
 
 PING = b'lunaratlas'
@@ -389,7 +390,7 @@ def thumbnail(path, side=160):
     show), or None when it cannot be read."""
     im = None
     for flag in (cv2.IMREAD_REDUCED_COLOR_8, cv2.IMREAD_UNCHANGED):
-        im = cv2.imread(path, flag)
+        im = cv_imread(path, flag)
         if im is not None:
             break
     if im is None:

@@ -10,6 +10,9 @@ import sys
 import tempfile
 import time as _time
 
+import cv2
+import numpy as np
+
 FROZEN = bool(getattr(sys, 'frozen', False))
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = 'LunarAtlas'
@@ -150,6 +153,37 @@ def publish(tmp, path):
     except OSError:
         pass
     os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------- Unicode-safe image I/O
+#
+# cv2.imread/imwrite open the path themselves, and on Windows that goes through OpenCV's own ANSI-codepage path
+# handling, not Python's: a non-ASCII name (an accented letter, a photo named in another script) is silently
+# mojibake'd into a different filename, so the read finds nothing and the write lands somewhere else. Python's
+# own open() is Unicode-correct on every platform, so read and write the bytes through it instead and hand cv2
+# only the already-open data.
+def cv_imread(path, flag=cv2.IMREAD_UNCHANGED):
+    try:
+        data = np.fromfile(path, np.uint8)      # cv2.imread's own contract: None on any failure, never raises
+    except OSError:
+        return None
+    if data.size == 0:                          # cv2.imdecode asserts on an empty buffer instead of returning None
+        return None
+    try:
+        return cv2.imdecode(data, flag)
+    except cv2.error:
+        return None
+
+
+def cv_imwrite(path, img, params=()):
+    ok, buf = cv2.imencode(os.path.splitext(path)[1], img, list(params))
+    if not ok:
+        return False
+    try:
+        buf.tofile(path)                        # cv2.imwrite's own contract: False on any failure, never raises
+    except OSError:
+        return False
+    return True
 
 
 def private_dir(path):
