@@ -16,7 +16,7 @@ import tempfile
 
 PACKAGE = 'opencv-python-headless==4.14.0.94'
 SOURCE_SHA256 = '4afa2ea1214453648be88259f035712454faa9039b686de7753569ba8eec1577'
-FLAGS = '-DWITH_FFMPEG=OFF -DWITH_GSTREAMER=OFF -DBUILD_opencv_videoio=OFF'
+FLAGS = '-DWITH_FFMPEG=OFF -DWITH_GSTREAMER=OFF -DBUILD_opencv_videoio=OFF -DBUILD_opencv_gapi=OFF'
 
 
 def run(*args, **kwargs):
