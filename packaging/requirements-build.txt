@@ -1,0 +1,5 @@
+-r ../requirements.txt
+pyinstaller>=6.16
+certifi>=2024.2
+# the app window (WebKit on macOS, Edge WebView2 on Windows); Linux builds use the browser
+pywebview>=6.2; sys_platform != 'linux'

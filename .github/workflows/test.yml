@@ -1,0 +1,93 @@
+# The whole test suite on Ubuntu, Windows and macOS (Apple silicon), with the GUI driven in headless Chrome.
+# Every run downloads the reference data fresh, through the app's own first-use code, as a new user's machine would.
+# Run by hand with "full" for the slow tests and the 64 px/deg LOLA relief (≈ 530 MB more, as a first close-up does).
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: 'Slow tests and the close-up relief (≈ 530 MB more download)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read              # what the build and the tests need; only the release job may write
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      FULL: ${{ inputs.full && '1' || '' }}
+      LUNARATLAS_SLOW_TESTS: ${{ inputs.full && '1' || '' }}
+      LUNARATLAS_PERF_FACTOR: '3'          # shared CI runners are slower than a desktop
+      LUNARATLAS_UI_OUT: ${{ github.workspace }}/ui-screenshots     # a screenshot per failed UI check
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '22'
+      - name: Dependencies
+        run: python -m pip install --require-hashes -r requirements-ci.lock       # pinned, with hashes (certifi: the packaged app's certificate test)
+      - name: Chrome
+        # preinstalled on every GitHub runner; the tests find it through LUNARATLAS_CHROME
+        run: |
+          for c in "$(command -v google-chrome || true)" \
+                   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+                   "/c/Program Files/Google/Chrome/Application/chrome.exe"; do
+            if [ -n "$c" ] && [ -x "$c" ]; then
+              [ "$RUNNER_OS" = Windows ] && c="$(cygpath -w "$c")"
+              echo "LUNARATLAS_CHROME=$c" >> "$GITHUB_ENV"; echo "Chrome: $c"; exit 0
+            fi
+          done
+          echo "no Chrome on this runner"; exit 1
+      - name: Reference data (first-use download)
+        working-directory: lunaratlas
+        run: |
+          python - <<'EOF'
+          import os
+          from atlas_geo import Reference
+          from atlas_names import load_features
+          from atlas_closeup import lola_path
+          from atlas_render import Fonts
+          Reference()
+          load_features()
+          lola_path(16)
+          Fonts('Barlow')
+          if os.environ.get('FULL'):
+              lola_path(64)
+          EOF
+      - name: Tests
+        run: |
+          python lunaratlas/tests/run_tests.py 2>&1 | tee test.log
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Nothing skipped that should have run
+        # a missing download, Chrome or Node makes tests skip, which would pass without testing anything
+        # what this platform cannot do (macOS folds Unicode file names; hard links) is not a missing test
+        run: |
+          allowed='does not distinguish the two forms|no hard links here'
+          [ -z "$FULL" ] && allowed="$allowed|slow test|64 px/deg"
+          bad=$(grep -E "skipped '" test.log | grep -vE "$allowed" || true)
+          if [ -n "$bad" ]; then echo "$bad"; echo "::error::tests were skipped"; exit 1; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: always()
+        with:
+          name: test-log-${{ matrix.os }}
+          path: |
+            test.log
+            ui-screenshots/*.png
+          if-no-files-found: ignore

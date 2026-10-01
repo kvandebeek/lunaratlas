@@ -1,0 +1,18 @@
+{
+  "include": ["lunaratlas", "tool_settings.py"],
+  "exclude": ["lunaratlas/data", "**/__pycache__"],
+  "extraPaths": ["lunaratlas", "lunaratlas/tests", "."],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic",
+  "reportOptionalMemberAccess": "none",
+  "reportOptionalSubscript": "none",
+  "reportOptionalIterable": "none",
+  "reportOptionalOperand": "none",
+  "reportPossiblyUnboundVariable": "none",
+  "reportArgumentType": "none",
+  "reportCallIssue": "none",
+  "reportIndexIssue": "none",
+  "reportOperatorIssue": "none",
+  "reportGeneralTypeIssues": "none",
+  "reportIncompatibleMethodOverride": "none"
+}

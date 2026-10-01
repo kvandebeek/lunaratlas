@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LunarAtlas</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/fonts.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+* { box-sizing: border-box; }
+html { background: var(--bg-0); }
+body { margin: 0; min-height: 100vh; color: var(--text); font: 15px/1.5 var(--font-ui); -webkit-font-smoothing: antialiased;
+  background: radial-gradient(1200px 600px at 50% -200px, var(--bg-3) 0%, transparent 70%), var(--bg-0); }
+main { max-width: 720px; margin: 0 auto; padding: 48px 20px 28px; min-height: 100vh; display: flex; flex-direction: column; }
+[hidden] { display: none !important; }
+
+/* ---- hero */
+.hero { display: flex; align-items: center; gap: 18px; margin-bottom: 30px; }
+.hero img { width: 64px; height: 64px; flex: none; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, .45)); }
+.hero h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; }
+.hero p { margin: 4px 0 0; color: var(--text-2); font-size: 15.5px; }
+
+.card { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-l); padding: 22px; margin-bottom: 18px; }
+.card h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--text-2); }
+
+/* ---- drop zone */
+#drop { position: relative; display: flex; align-items: center; gap: 26px; padding: 26px 28px; border-radius: 12px;
+  border: 1.5px dashed rgba(143, 216, 236, 0.28); background: linear-gradient(180deg, rgba(31, 44, 90, .35), rgba(10, 15, 37, .2));
+  cursor: pointer; transition: border-color .15s, background .15s; outline: none; }
+#drop:hover { border-color: var(--accent-line); background: linear-gradient(180deg, rgba(31, 44, 90, .6), rgba(10, 15, 37, .3)); }
+#drop:active { background: rgba(31, 44, 90, .3); }
+#drop:focus-visible { box-shadow: var(--focus); border-color: var(--accent); }
+#drop.over { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+#drop svg.moon { width: 118px; height: 118px; flex: none; transition: transform .25s var(--ease); }
+#drop:hover svg.moon, #drop.over svg.moon { transform: scale(1.04) rotate(-3deg); }
+#drop .txt b { display: block; font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+#drop .txt .when-over { display: none; }
+#drop.over .txt .when-idle { display: none; }
+#drop.over .txt .when-over { display: block; }
+.formats { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.formats span { font-size: 12px; color: var(--text-2); padding: 2px 8px; border-radius: 6px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); }
+.hint { color: var(--text-2); font-size: 13.5px; }
+
+/* ---- chosen photo */
+.file { display: flex; align-items: center; gap: 12px; }
+.file .icon { width: 40px; height: 40px; border-radius: 9px; display: grid; place-items: center; background: var(--bg-3); color: var(--grid); flex: none; }
+.file b { font-weight: 600; }
+label.lbl { display: block; color: var(--text-2); font-size: 13px; margin: 18px 0 6px; }
+input[type=datetime-local] { font: inherit; background: var(--bg-0); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: 8px; padding: 7px 10px; color-scheme: dark; }
+input[type=datetime-local]:hover { border-color: rgba(255, 255, 255, .26); }
+input[type=datetime-local]:focus-visible { outline: none; box-shadow: var(--focus); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
+
+/* ---- progress */
+#work .head { display: flex; align-items: center; gap: 14px; }
+#work .head .htxt { flex: 1; min-width: 0; }
+#work .head b { font-size: 17px; font-weight: 600; }
+#work .head .pname { display: block; margin-top: 2px; color: var(--text-3); font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#work .head .pname:empty { display: none; }
+#work .head .time { color: var(--text-3); font-size: 13px; font-variant-numeric: tabular-nums; }
+.bar { height: 6px; background: rgba(255, 255, 255, .08); border-radius: 3px; overflow: hidden; margin: 14px 0 16px; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width .5s var(--ease); }
+.bar.failed i { background: var(--danger); }
+ol.stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+ol.stages li { display: flex; align-items: center; gap: 11px; padding: 5px 0; color: var(--text-3); font-size: 14px; }
+ol.stages li .dot { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line-strong); flex: none; display: grid; place-items: center; }
+ol.stages li .note { margin-left: auto; font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; text-align: right; }
+ol.stages li.active { color: var(--text); font-weight: 500; }
+ol.stages li.active .dot { border-color: var(--accent); }
+ol.stages li.active .dot::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+ol.stages li.active .note { color: var(--text-2); }
+ol.stages li.done, ol.stages li.skip { color: var(--text-2); }
+ol.stages li.done .dot, ol.stages li.skip .dot { border-color: transparent; background: rgba(143, 216, 236, .16); color: var(--grid); }
+ol.stages li.done .dot::after, ol.stages li.skip .dot::after { content: ''; width: 7px; height: 4px; border: solid currentColor; border-width: 0 0 1.6px 1.6px; transform: translateY(-1px) rotate(-45deg); }
+ol.stages li.failed { color: var(--danger); }
+ol.stages li.failed .dot { border-color: var(--danger); }
+@keyframes pulse { 50% { opacity: .35; } }
+#wstep { display: block; min-height: 1.5em; margin-top: 12px; }
+#wstep:empty { display: none; }
+.err { margin-top: 16px; padding: 14px 16px; border-radius: 10px; background: var(--danger-soft); border: 1px solid rgba(240, 138, 126, .3); }
+.err b { display: block; color: var(--text); font-weight: 600; margin-bottom: 4px; }
+.err p { margin: 0; color: var(--text-2); font-size: 14px; }
+.err ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.err li b { display: inline; color: var(--accent); margin: 0; }
+.err li span { color: var(--text-2); font-size: 14px; }
+.err li small { display: block; color: var(--text-3); font-size: 12px; margin-top: 2px; }
+details.log { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+details.log summary { cursor: pointer; color: var(--text-2); font-size: 13px; list-style: none; display: flex; align-items: center; gap: 6px; border-radius: 5px; width: max-content; padding: 2px 4px; margin: -2px -4px; }
+details.log summary::-webkit-details-marker { display: none; }
+details.log summary::before { content: '▸'; font-size: 11px; transition: transform .15s; }
+details.log[open] summary::before { transform: rotate(90deg); }
+details.log summary:hover { color: var(--text); }
+details.log summary:focus-visible { outline: none; box-shadow: var(--focus); }
+.logwrap { position: relative; margin-top: 10px; }
+.logwrap .btn { position: absolute; top: 8px; right: 8px; }
+pre#log { background: var(--bg-0); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 12px/1.55 var(--font-mono);
+  max-height: 240px; overflow: auto; white-space: pre-wrap; margin: 0; color: var(--text-2); }
+
+/* ---- earlier photos */
+ul.recent { list-style: none; padding: 0; margin: 0 -10px; }
+ul.recent li { display: flex; align-items: center; gap: 14px; padding: 9px 10px; border-radius: 10px; cursor: pointer; transition: background .12s; }
+ul.recent li + li { margin-top: 2px; }
+ul.recent li:hover { background: var(--bg-2); }
+ul.recent li:active { background: var(--bg-3); }
+/* the chosen photo, as a small square: in the progress header and beside an earlier photo */
+.thumb { width: 52px; height: 52px; border-radius: 8px; flex: none; background: var(--bg-0) center/cover no-repeat; border: 1px solid var(--line); overflow: hidden; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#work .head .thumb { width: 56px; height: 56px; }
+ul.recent .meta { flex: 1; min-width: 0; }
+ul.recent .name { display: flex; min-width: 0; font-weight: 500; white-space: nowrap; }
+ul.recent .name .a { overflow: hidden; text-overflow: ellipsis; }
+ul.recent .name .b { flex: none; }
+ul.recent .sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; white-space: nowrap; margin-top: 3px; color: var(--text-3); font-size: 13px; font-variant-numeric: tabular-nums; }
+.empty { color: var(--text-3); font-size: 14px; }
+
+footer { margin-top: auto; padding-top: 22px; display: flex; justify-content: space-between; gap: 16px; color: var(--text-3); font-size: 13px; align-items: center; }
+footer .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+footer > .linkbtn { flex: none; }
+
+@media (max-width: 560px) {
+  #drop { flex-direction: column; text-align: center; }
+  .formats { justify-content: center; }
+  .hero img { width: 52px; height: 52px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <img src="/lunaratlas.svg" alt="">
+    <div>
+      <h1>LunarAtlas</h1>
+      <p>The names of craters, seas and mountains on your own photo of the Moon.</p>
+    </div>
+  </header>
+
+  <section class="card" id="pick">
+    <div id="drop" tabindex="0" role="button" aria-label="Choose a Moon photo">
+      <svg class="moon" viewBox="0 0 120 120" aria-hidden="true">
+        <defs>
+          <radialGradient id="dm" cx=".78" cy=".35" r=".8"><stop offset="0" stop-color="var(--moon)"/><stop offset="1" stop-color="var(--moon-2)"/></radialGradient>
+          <clipPath id="dd"><circle cx="60" cy="60" r="44"/></clipPath>
+        </defs>
+        <circle cx="60" cy="60" r="44" fill="var(--moon-shadow)"/>
+        <path d="M60 16a44 44 0 0 1 0 88a16 44 0 0 0 0-88z" fill="url(#dm)"/>
+        <g clip-path="url(#dd)" fill="none" stroke="var(--grid)" stroke-opacity=".45" stroke-width="1">
+          <ellipse cx="60" cy="60" rx="22" ry="44"/><ellipse cx="60" cy="60" rx="38" ry="44"/>
+          <path d="M60 16v88M16 60h88M22 38h76M22 82h76"/>
+        </g>
+        <circle cx="60" cy="60" r="44" fill="none" stroke="var(--grid)" stroke-opacity=".7" stroke-width="1.2"/>
+        <g fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round">
+          <circle cx="83" cy="46" r="3.4"/><circle cx="88" cy="68" r="3"/><path d="M83 46l5 22" stroke-width="1" opacity=".8"/>
+          <path d="M8 22V8h14M98 8h14v14M112 98v14H98M22 112H8V98"/>
+        </g>
+      </svg>
+      <div class="txt">
+        <b class="when-idle">Drop a Moon photo here</b>
+        <b class="when-over">Release to open this photo</b>
+        <span class="hint">or click to choose one. Full Moon, any phase, mosaic or close-up.</span>
+        <div class="formats"><span>TIFF</span><span>PNG</span><span>JPEG</span></div>
+      </div>
+    </div>
+    <input type="file" id="file" accept=".tif,.tiff,.png,.jpg,.jpeg" hidden>
+  </section>
+
+  <section class="card" id="details" hidden>
+    <div class="file">
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="14" cy="11" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></div>
+      <div><b id="fname"></b><div class="hint" id="fsize"></div></div>
+    </div>
+    <div id="timebox">
+      <label class="lbl" for="when">When was it taken? (your local time)</label>
+      <input type="datetime-local" id="when">
+      <p class="hint" id="whenfrom" hidden></p>
+      <p class="hint">Needed for close-ups that do not show the edge of the Moon. For other photos it makes the result a little
+        more precise. Leave it empty if you do not know.</p>
+    </div>
+    <div class="row">
+      <button class="btn primary lg" id="go">Find the names</button>
+      <button class="btn ghost lg" id="cancel">Choose another</button>
+    </div>
+  </section>
+
+  <section class="card" id="work" hidden aria-live="polite">
+    <div class="head">
+      <div class="thumb" id="wthumb" hidden><img id="wimg" alt="" decoding="async"></div>
+      <div class="htxt"><b id="wtitle">Working…</b><span class="pname" id="wname"></span></div>
+      <span class="time" id="wtime"></span>
+    </div>
+    <div class="bar" id="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+    <ol class="stages" id="stages"></ol>
+    <span class="hint" id="wstep"></span>
+    <div class="err" id="werr" hidden></div>
+    <div class="row">
+      <button class="btn" id="stop">Cancel</button>
+      <button class="btn primary" id="force" hidden>Name it anyway</button>
+      <button class="btn" id="again" hidden>Choose another photo</button>
+    </div>
+    <details class="log" open><summary>Details</summary>
+      <div class="logwrap"><pre id="log"></pre><button class="btn sm" id="copy">Copy</button></div>
+    </details>
+  </section>
+
+  <section class="card" id="recentbox" hidden>
+    <h2>Earlier photos</h2>
+    <ul class="recent" id="recent"></ul>
+  </section>
+
+  <footer>
+    <span class="path">Photos and exports are kept in <button class="linkbtn" id="folder" title="Show in the file manager"></button></span>
+    <button class="linkbtn" id="quit">Quit LunarAtlas</button>
+  </footer>
+</main>
+<script src="/friendly.js"></script>
+<script src="/exif.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

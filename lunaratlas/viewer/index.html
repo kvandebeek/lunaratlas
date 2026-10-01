@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moon Atlas</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/fonts.css">
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/viewer.css">
+</head>
+<body>
+<canvas id="map"></canvas>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-moon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3a9 9 0 0 1 0 18a6.5 9 0 0 0 0-18z" fill="currentColor"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 11V5.5a1.5 1.5 0 0 1 3 0V10m0-4.5V4a1.5 1.5 0 0 1 3 0v6m0-4.5a1.5 1.5 0 0 1 3 0V11m0-3a1.5 1.5 0 0 1 3 0v6c0 4-3 7-7 7h-1c-3 0-4.5-1.5-6-4l-2.6-4.3a1.6 1.6 0 0 1 2.6-1.8L8 13.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3.5 16.5l13-13 4 4-13 13z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M7.5 12.5l2 2M10.5 9.5l1.5 1.5M13.5 6.5l2 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-ellipse" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-rect" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-outline" viewBox="0 0 24 24"><path d="M5 8l5-4 8 3 1 8-6 5-8-3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="5" cy="8" r="1.6" fill="currentColor"/><circle cx="18" cy="7" r="1.6" fill="currentColor"/><circle cx="13" cy="20" r="1.6" fill="currentColor"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6.5V5h14v1.5M12 5v14M9.5 19h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 19L18.5 5.5M11 5h8v8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c5 0 8.5 4.5 9.5 7a13 13 0 0 1-2.7 3.7M6.6 6.6A13 13 0 0 0 2.5 12c1 2.5 4.5 7 9.5 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7L4.5 11.5 9 16M5 11.5h9.5a5 5 0 0 1 0 10H12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 7l4.5 4.5L15 16M19 11.5H9.5a5 5 0 0 0 0 10H12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4l9 16H3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v4.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="17.3" r="1.1" fill="currentColor"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<header class="panel topbar">
+  <a class="back" id="otherImage" href="/app" title="Open another photo" hidden><svg width="16" height="16"><use href="#i-back"/></svg><span>Other image</span></a>
+  <div class="brand"><img class="brandmark" src="/lunaratlas.svg" alt=""><b>LunarAtlas</b><span class="file" id="fileName"></span><span class="file" id="skyLine"></span></div>
+  <div class="search">
+    <svg width="16" height="16"><use href="#i-search"/></svg>
+    <input id="q" type="text" placeholder="Search names" autocomplete="off" spellcheck="false">
+    <kbd>/</kbd>
+    <ul id="results"></ul>
+  </div>
+</header>
+
+
+<nav class="panel tools" id="tools" aria-label="Tools">
+  <button data-tool="pan" class="on" data-tip="Pan and select" data-key="V" aria-pressed="true"><svg width="19" height="19"><use href="#i-hand"/></svg></button>
+  <hr>
+  <button data-tool="measure" data-tip="Measure distance" data-key="M"><svg width="19" height="19"><use href="#i-ruler"/></svg></button>
+  <hr>
+  <button data-tool="circle" data-tip="Circle" data-key="C"><svg width="19" height="19"><use href="#i-circle"/></svg></button>
+  <button data-tool="ellipse" data-tip="Ellipse" data-key="E"><svg width="19" height="19"><use href="#i-ellipse"/></svg></button>
+  <button data-tool="rect" data-tip="Rectangle" data-key="R"><svg width="19" height="19"><use href="#i-rect"/></svg></button>
+  <button data-tool="outline" data-tip="Outline: click points, double-click to close" data-key="O"><svg width="19" height="19"><use href="#i-outline"/></svg></button>
+  <hr>
+  <button data-tool="text" data-tip="Text" data-key="T"><svg width="19" height="19"><use href="#i-text"/></svg></button>
+  <button data-tool="arrow" data-tip="Arrow" data-key="A"><svg width="19" height="19"><use href="#i-arrow"/></svg></button>
+  <hr>
+  <button id="undoBtn" data-tip="Undo" data-key="⌘Z"><svg width="19" height="19"><use href="#i-undo"/></svg></button>
+  <button id="redoBtn" data-tip="Redo" data-key="⇧⌘Z"><svg width="19" height="19"><use href="#i-redo"/></svg></button>
+</nav>
+<div class="tip" id="tip"></div>
+
+<aside class="panel layers" id="layers">
+  <header id="layersHead" tabindex="0" role="button" aria-expanded="true" aria-controls="layers"><h3>Layers</h3><svg width="16" height="16"><use href="#i-chev"/></svg></header>
+  <div class="body">
+    <div class="row"><span class="swatch" style="background:var(--label)"></span><label for="l-area">Maria, lakes, bays</label><span class="n" id="n-area"></span><label class="switch"><input type="checkbox" id="l-area" data-layer="area" checked><span></span></label></div>
+    <div class="row"><span class="swatch" style="background:var(--label)"></span><label for="l-crater">Craters</label><span class="n" id="n-crater"></span><label class="switch"><input type="checkbox" id="l-crater" data-layer="crater" checked><span></span></label></div>
+    <div class="row"><span class="swatch" style="background:var(--label)"></span><label for="l-lettered">Lettered craters</label><span class="n" id="n-lettered"></span><label class="switch"><input type="checkbox" id="l-lettered" data-layer="lettered" checked><span></span></label></div>
+    <div class="row"><span class="swatch" style="background:var(--label)"></span><label for="l-relief">Mountains, rilles, ridges</label><span class="n" id="n-relief"></span><label class="switch"><input type="checkbox" id="l-relief" data-layer="relief" checked><span></span></label></div>
+    <div class="row"><span class="swatch ring" style="border-color:var(--label)"></span><label for="l-landing">Landing sites</label><span class="n" id="n-landing"></span><label class="switch"><input type="checkbox" id="l-landing" data-layer="landing" checked><span></span></label></div>
+    <div class="sep"></div>
+    <div class="row"><span class="swatch ring" style="border-color:var(--rim)"></span><label for="l-rims">All crater outlines</label><label class="switch"><input type="checkbox" id="l-rims" data-layer="rims"><span></span></label></div>
+    <div class="row"><span class="swatch line" style="border-color:var(--grid)"></span><label for="l-grid">Lat/lon grid</label><kbd>G</kbd><label class="switch"><input type="checkbox" id="l-grid" data-layer="grid"><span></span></label></div>
+    <div class="row"><span class="swatch" style="background:var(--accent)"></span><label for="l-mine">My drawings</label><span class="n" id="n-mine">0</span><label class="switch"><input type="checkbox" id="l-mine" data-layer="mine" checked><span></span></label></div>
+    <div class="sep"></div>
+    <div class="sub">Names on the night side</div>
+    <div class="seg" id="night" role="group" aria-label="Names on the night side"><button data-v="hide" class="on">Hide</button><button data-v="dim">Dim</button><button data-v="show">Show</button></div>
+    <div class="slider"><div class="lbl"><span>Detail</span><b id="minPxV"></b></div><input type="range" id="minPx" min="10" max="70" step="1" value="24"></div>
+    <div class="slider"><div class="lbl"><span>Label size</span><b id="fsV"></b></div><input type="range" id="fs" min="0.8" max="1.6" step="0.05" value="1"></div>
+    <div class="fontrow"><span>Font</span><select id="fontSel"></select></div>
+  </div>
+</aside>
+
+<aside class="panel info" id="info" hidden></aside>
+<div class="panel picks" id="picks" hidden></div>
+
+<footer class="panel status">
+  <div class="left">
+    <div class="readout" id="readout"><span>Move over the Moon</span></div>
+    <button class="qchip" id="gate" hidden aria-haspopup="dialog"><svg width="14" height="14"><use href="#i-warn"/></svg><span></span></button>
+    <span class="save" id="saveState" role="status" aria-live="polite"></span>
+  </div>
+  <div class="scalebar" title="Scale at the disk centre"><div class="bar" id="sbar"></div><span id="slabel"></span></div>
+  <div class="zoom"><span class="pct" id="zoomPct"></span>
+    <button class="btn ghost" id="fitBtn" title="Fit the Moon (F)">Fit</button>
+    <button class="btn ghost" id="oneBtn" title="Actual pixels (1)">1:1</button>
+    <button class="btn primary" id="exportBtn"><svg width="15" height="15"><use href="#i-down"/></svg>Export</button>
+  </div>
+</footer>
+<div class="popover gatepop" id="gatePop" role="dialog" aria-label="Photo quality" hidden></div>
+
+<div class="popover" id="annot" hidden></div>
+<div class="modal" id="export" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/friendly.js"></script>
+<script src="/boot.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# runtime: python3 -m pip install -r requirements.txt  (opencv-python works too; no OpenCV window is used)
+numpy>=2.2
+opencv-python-headless>=4.11,<5  # 4.x is what the tests run on
+pillow>=11

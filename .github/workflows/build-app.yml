@@ -1,0 +1,96 @@
+# The packaged LunarAtlas for macOS (Apple silicon and Intel), Windows and Linux.
+# Run it by hand (Actions > Build app > Run workflow) or push a tag v1.2.3: a tag also makes a draft release with
+# the installers attached.
+name: Build app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read              # the build jobs only read; the release job below may write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, exe: 'dist/LunarAtlas.app/Contents/MacOS' }        # Apple silicon
+          - { os: macos-15-intel, exe: 'dist/LunarAtlas.app/Contents/MacOS' }        # Intel
+          - { os: windows-latest, exe: 'dist/LunarAtlas' }
+          - { os: ubuntu-22.04, exe: 'dist/LunarAtlas' }                        # older glibc: runs on more distros
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.14'
+      - name: Dependencies
+        run: python -m pip install --require-hashes -r packaging/requirements-build.lock       # pinned, with hashes
+      - name: Minimal OpenCV
+        # The PyPI wheel carries FFmpeg GPL codecs that LunarAtlas does not use.  Build the pinned OpenCV source
+        # natively without video I/O; packaging/build.py verifies no forbidden codec is present afterwards.
+        run: python packaging/build_opencv_minimal.py
+      - name: Inno Setup
+        if: runner.os == 'Windows'
+        run: command -v iscc || test -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" || choco install innosetup -y --no-progress
+      - name: Version
+        # the tag's number, else 0.0.0 (Windows file versions must be numbers)
+        run: |
+          v=0.0.0; [[ "$GITHUB_REF" == refs/tags/v* ]] && v="${GITHUB_REF_NAME#v}"
+          echo "LUNARATLAS_VERSION=$v" >> "$GITHUB_ENV"
+      - name: Build
+        run: python packaging/build.py --version "$LUNARATLAS_VERSION"
+      - name: Smoke test
+        # the console twin answers every sub-command, and the launcher serves its page and every script/style it
+        # references (no browser, a scratch work folder): this is what would have caught the app shipping without
+        # boot.js/app.js, and the CLI not knowing about `batch`
+        run: |
+          "${{ matrix.exe }}/lunaratlas-cli" --help
+          for c in locate export info find view app batch; do
+            "${{ matrix.exe }}/lunaratlas-cli" "$c" --help > /dev/null
+          done
+          export LUNARATLAS_TOKEN=smoke-test-token           # the launcher wants its token on every request
+          "${{ matrix.exe }}/lunaratlas-cli" app --no-open --port 8799 --folder "$RUNNER_TEMP/work" &
+          for i in $(seq 1 60); do curl -sf -H "X-LA-Token: $LUNARATLAS_TOKEN" http://localhost:8799/app/ping && break; sleep 1; done
+          curl -sf -H "X-LA-Token: $LUNARATLAS_TOKEN" http://localhost:8799/app | grep -q 'LunarAtlas'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8799/app)" = 403        # no token, no answer
+          for page in app.html index.html; do
+            for asset in $(grep -oE '(src|href)="/[^"]+"' "lunaratlas/viewer/$page" | sed -E 's/.*"(\/[^"]+)"/\1/'); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-LA-Token: $LUNARATLAS_TOKEN" "http://localhost:8799$asset")
+              [ "$code" = 200 ] || { echo "::error::$page references $asset, which the packaged app answers $code for"; exit 1; }
+            done
+          done
+          curl -sf -X POST -H "X-LA-Token: $LUNARATLAS_TOKEN" -H 'Content-Type: application/json' -d '{}' http://localhost:8799/app/quit
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: LunarAtlas-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd out && sha256sum * > SHA256SUMS.txt)          # so a download can be checked against the release
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "LunarAtlas ${GITHUB_REF_NAME#v}"

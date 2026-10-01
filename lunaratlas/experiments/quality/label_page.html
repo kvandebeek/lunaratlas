@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quality labels</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0e1013; --panel: #171a1f; --line: #262a31; --text: #e6e8eb; --dim: #8b929c;
+  --good: #3fb67a; --mid: #d6a53a; --bad: #e0574f; --accent: #6aa7ff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 Roboto, system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  padding: 10px 16px; background: rgba(14,16,19,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(6px); }
+header h1 { font-size: 16px; font-weight: 500; margin: 0 8px 0 0; }
+.count { color: var(--dim); font-variant-numeric: tabular-nums; }
+.bar { flex: 1 1 160px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; min-width: 120px; }
+.bar > div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+label.tog { color: var(--dim); display: flex; gap: 6px; align-items: center; cursor: pointer; user-select: none; }
+main { padding: 16px; max-width: 1500px; margin: 0 auto; }
+.intro { color: var(--dim); max-width: 900px; margin: 0 0 14px; }
+.intro b { color: var(--text); font-weight: 500; }
+.stage { display: grid; grid-template-columns: minmax(260px, 420px) 1fr; gap: 16px; }
+@media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.card h2 { font-size: 13px; font-weight: 500; color: var(--dim); margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; }
+.thumb img { width: 100%; height: auto; display: block; border-radius: 6px; background: #000; }
+.meta { margin-top: 10px; color: var(--dim); font-size: 13px; word-break: break-all; }
+.meta .own { color: var(--accent); font-weight: 500; }
+.crops { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.crops figure { margin: 0; }
+.crops img { display: block; image-rendering: pixelated; background: #000; border-radius: 4px; max-width: 100%; }
+.crops figcaption { color: var(--dim); font-size: 12px; margin-top: 4px; }
+.verdict { display: flex; gap: 10px; margin: 14px 0 10px; flex-wrap: wrap; }
+.verdict button { flex: 1 1 140px; padding: 14px 10px; font: 500 15px Roboto, sans-serif; color: var(--text);
+  background: #1d2127; border: 2px solid var(--line); border-radius: 10px; cursor: pointer; }
+.verdict button kbd { color: var(--dim); font: 12px Roboto; margin-left: 6px; }
+.verdict button.on[data-v=good] { border-color: var(--good); background: rgba(63,182,122,.16); }
+.verdict button.on[data-v=borderline] { border-color: var(--mid); background: rgba(214,165,58,.16); }
+.verdict button.on[data-v=reject] { border-color: var(--bad); background: rgba(224,87,79,.16); }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chips button { padding: 6px 12px; border-radius: 16px; border: 1px solid var(--line); background: #1d2127;
+  color: var(--dim); font: 13px Roboto; cursor: pointer; }
+.chips button.on { color: var(--text); border-color: var(--accent); background: rgba(106,167,255,.15); }
+.chips button kbd { font: 11px Roboto; opacity: .6; margin-left: 4px; }
+textarea { width: 100%; margin-top: 10px; min-height: 44px; background: #111418; color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px; font: 13px Roboto; resize: vertical; }
+.nav { display: flex; gap: 10px; align-items: center; margin-top: 12px; color: var(--dim); }
+.nav button { padding: 8px 14px; background: #1d2127; color: var(--text); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font: 13px Roboto; }
+.saved { margin-left: auto; font-size: 12px; }
+table.m { border-collapse: collapse; font-size: 12px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+table.m td { padding: 2px 10px 2px 0; } table.m td:first-child { color: var(--dim); }
+.strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; margin-top: 18px; }
+.strip div { position: relative; cursor: pointer; border-radius: 6px; overflow: hidden; border: 2px solid transparent; aspect-ratio: 1; background: #000; }
+.strip div.cur { border-color: var(--accent); }
+.strip img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .75; }
+.strip span { position: absolute; right: 4px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: #444; box-shadow: 0 0 0 2px #0008; }
+.strip span.good { background: var(--good); } .strip span.borderline { background: var(--mid); } .strip span.reject { background: var(--bad); }
+.done { padding: 10px 14px; border: 1px solid var(--good); border-radius: 8px; color: var(--good); margin-bottom: 12px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Quality gate · labels</h1>
+  <span class="count" id="count">…</span>
+  <div class="bar"><div id="bar"></div></div>
+  <label class="tog"><input type="checkbox" id="onlyOpen"> only unlabelled</label>
+  <label class="tog"><input type="checkbox" id="zoom"> crops 2×</label>
+  <label class="tog"><input type="checkbox" id="showM"> show measurements</label>
+</header>
+<main>
+  <p class="intro">For each image: <b>would you want lunaratlas to annotate it?</b> Good = yes. Borderline = acceptable
+  but not great. Reject = too low quality (blurry, noisy, over-sharpened, overexposed, heavy JPEG, …). Reasons are optional
+  but help set the thresholds. The crops are at actual pixels. Keys: <b>1 2 3</b> verdict, <b>← →</b> previous/next,
+  letters for reasons. Every click is saved immediately.</p>
+  <div class="done" id="done">All images are labelled — thank you. You can close this page; the labels are saved.</div>
+  <div class="stage">
+    <section class="card thumb">
+      <h2>Whole image</h2>
+      <img id="thumb" alt="">
+      <div class="meta" id="meta"></div>
+      <div id="measure"></div>
+    </section>
+    <section class="card">
+      <h2>1:1 crops</h2>
+      <div class="crops">
+        <figure><img id="detail" alt=""><figcaption>most detailed area, actual pixels</figcaption></figure>
+        <figure id="limbFig"><img id="limb" alt=""><figcaption>sunlit limb, actual pixels</figcaption></figure>
+      </div>
+      <div class="verdict" id="verdict">
+        <button data-v="good">Good<kbd>1</kbd></button>
+        <button data-v="borderline">Borderline<kbd>2</kbd></button>
+        <button data-v="reject">Reject<kbd>3</kbd></button>
+      </div>
+      <div class="chips" id="chips"></div>
+      <textarea id="note" placeholder="Note (optional)"></textarea>
+      <div class="nav">
+        <button id="prev">← Previous</button><button id="next">Next →</button>
+        <span id="pos"></span><span class="saved" id="saved"></span>
+      </div>
+    </section>
+  </div>
+  <div class="strip" id="strip"></div>
+</main>
+<script src="/label_page.js"></script>
+</body>
+</html>

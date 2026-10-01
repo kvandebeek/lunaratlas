@@ -1,0 +1,85 @@
+# The GUI journeys (tests/test_ui.py) in every browser a user may open the viewer in, on the systems it exists on.
+# Chrome runs with the whole suite in test.yml; this adds Edge and Firefox on Ubuntu, Windows and macOS, and Safari on
+# macOS. DuckDuckGo has no automation driver: its engines are Safari's (macOS) and Edge's (Windows), and the rest is
+# the manual check in tests/ui/DUCKDUCKGO.md.
+# Every run downloads the reference data fresh, through the app's own first-use code, as a new user's machine would.
+name: Browsers
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read              # what the build and the tests need; only the release job may write
+
+jobs:
+  ui:
+    name: ${{ matrix.browser }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+        browser: [edge, firefox]
+        include:
+          - os: macos-15
+            browser: safari
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      LUNARATLAS_BROWSER: ${{ matrix.browser }}
+      LUNARATLAS_PERF_FACTOR: '3'          # shared CI runners are slower than a desktop
+      LUNARATLAS_UI_OUT: ${{ github.workspace }}/ui-screenshots     # a screenshot per failed UI check
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '22'
+      - name: Dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Safari remote automation
+        # safaridriver drives Safari only once this is allowed; Safari has no headless mode, it opens a real window
+        if: matrix.browser == 'safari'
+        run: sudo safaridriver --enable
+      - name: The browser
+        # Edge, Firefox and their drivers are preinstalled on every GitHub runner; the tests find them (tests/_support.py)
+        working-directory: lunaratlas/tests
+        run: |
+          python -c "import _support as S; e = S.ui_browser_env(); print(e); raise SystemExit(0 if e else 1)" \
+            || { echo "::error::no $LUNARATLAS_BROWSER on this runner"; exit 1; }
+      - name: Reference data (first-use download)
+        working-directory: lunaratlas
+        run: |
+          python - <<'EOF'
+          from atlas_geo import Reference
+          from atlas_names import load_features
+          from atlas_closeup import lola_path
+          Reference()
+          load_features()
+          lola_path(16)
+          EOF
+      - name: UI journeys in ${{ matrix.browser }}
+        run: |
+          python lunaratlas/tests/run_tests.py --pattern 'test_ui.py' 2>&1 | tee test.log
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Nothing skipped that should have run
+        # a missing download, browser, driver or Node makes the journeys skip, which would pass without testing anything
+        run: |
+          bad=$(grep -E "skipped '" test.log | grep -v "not in this browser" || true)
+          if [ -n "$bad" ]; then echo "$bad"; echo "::error::tests were skipped"; exit 1; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: always()
+        with:
+          name: ui-${{ matrix.browser }}-${{ matrix.os }}
+          path: |
+            test.log
+            ui-screenshots/*.png
+            ui-screenshots/*-driver.log
+          if-no-files-found: ignore
