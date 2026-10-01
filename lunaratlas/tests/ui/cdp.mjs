@@ -34,6 +34,9 @@ export class Browser {
       '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--mute-audio',
       '--force-color-profile=srgb', '--disable-features=Translate,MediaRouter', `--window-size=${width},${height}`,
+      // Edge on Linux ships without Chrome's setuid sandbox helper, so without this it never writes
+      // DevToolsActivePort and exits silently; harmless here since this only ever opens our own test pages.
+      ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
       'about:blank'], { stdio: 'ignore' });
     const portFile = join(profile, 'DevToolsActivePort');
     for (let i = 0; i < 150 && !existsSync(portFile); i++) await sleep(100);
@@ -267,7 +270,10 @@ export async function runJourney(name, fn, { chrome, launch, out, base }) {
     if (process.env.LUNARATLAS_UI_TOKEN) await b.goto(`${base}/?t=${process.env.LUNARATLAS_UI_TOKEN}`);     // the token link: the cookie
     await fn(b, ok, base);
   } catch (e) {
-    await ok(false, 'stopped: ' + (e.stack || e.message).split('\n').slice(0, 3).join(' | '));
+    // js() embeds the failed expression's own source ahead of the real reason, and that source may itself span
+    // many lines: slicing by line let a multi-line expression use up the whole line budget before the actual
+    // error or a stack frame ever appeared. Collapse to one line and bound by length instead.
+    await ok(false, 'stopped: ' + (e.stack || e.message).replace(/\s+/g, ' ').slice(0, 300));
   }
   const errs = b.errors.filter((e) => !/Failed to load resource/.test(e));
   await ok(errs.length === 0, `no script errors on the page${errs.length ? ': ' + errs.slice(0, 5).join(' || ') : ''}`);

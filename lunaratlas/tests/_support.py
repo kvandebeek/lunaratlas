@@ -261,9 +261,25 @@ def run_main(*argv):
     return code, out.getvalue()
 
 
+def cache_dir(home):
+    """Where a CLI subprocess given `home` as HOME (see subprocess_env) keeps its tile cache, mirroring
+    atlas_paths.user_dir('cache') for the platform this test runs on."""
+    if sys.platform == 'darwin':
+        return os.path.join(home, 'Library', 'Caches', 'LunarAtlas')
+    if sys.platform == 'win32':
+        return os.path.join(home, 'AppData', 'Local', 'LunarAtlas', 'Cache')
+    return os.path.join(home, '.cache', 'lunaratlas')
+
+
 def subprocess_env(home):
-    """The environment for a CLI subprocess: its own HOME (tile cache), no browser, unbuffered output."""
-    env = dict(os.environ, HOME=home, PYTHONUNBUFFERED='1', LUNARATLAS_VIEW_OPEN='0', LUNARATLAS_SELFTEST='1')
+    """The environment for a CLI subprocess: its own HOME (tile cache), no browser, unbuffered output.
+    atlas_paths.user_dir() reads XDG_CACHE_HOME/XDG_DATA_HOME on Linux and LOCALAPPDATA on Windows ahead of HOME,
+    so without overriding those too the subprocess's cache would land under the test process's own HOME instead
+    of this test's home, and a test asserting the cache lives under `home` would fail on those platforms only."""
+    env = dict(os.environ, HOME=home, PYTHONUNBUFFERED='1', LUNARATLAS_VIEW_OPEN='0', LUNARATLAS_SELFTEST='1',
+               LOCALAPPDATA=os.path.join(home, 'AppData', 'Local'),
+               XDG_CACHE_HOME=os.path.join(home, '.cache'),
+               XDG_DATA_HOME=os.path.join(home, '.local', 'share'))
     env.pop('PYTHONPATH', None)
     return env
 

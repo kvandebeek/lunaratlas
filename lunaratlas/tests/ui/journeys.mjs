@@ -602,7 +602,9 @@ const J = {
     await b.press('c'); await b.drag(cx, cy, cx + 0.2 * R, cy);
     await b.until(`!document.getElementById('annot').hidden`, 3000, 'the editor');
     await b.type('Unsaved'); await b.click('#aOk');
-    await b.js(`window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).includes('/edits') && o && o.method === 'POST' ? Promise.reject(new Error('down')) : window.__realFetch(u, o)`);
+    // an IIFE, not two ;-separated statements: WebDriver's js() wraps the expression in `return (...)`, which a
+    // statement sequence cannot sit inside
+    await b.js(`(() => { window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).includes('/edits') && o && o.method === 'POST' ? Promise.reject(new Error('down')) : window.__realFetch(u, o); })()`);
     await b.press('v');
     await b.click('#exportBtn');
     await b.until(`!document.getElementById('export').hidden`, 2000, 'the export dialog');

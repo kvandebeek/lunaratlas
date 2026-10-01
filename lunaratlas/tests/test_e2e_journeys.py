@@ -370,7 +370,7 @@ class ViewerJourney(Journey):
         self.assertEqual(v2.request('/edits')[1]['shapes'][0]['label'], 'first')
         v2.request('/edits', dict(shapes=[dict(kind='text', x=self.cx, y=self.cy, label='second')]))
         self.assertEqual(self.v.request('/edits')[1]['shapes'][0]['label'], 'second')
-        tiles = os.path.join(self.home, 'Library', 'Caches', 'lunaratlas', 'tiles')
+        tiles = os.path.join(S.cache_dir(self.home), 'tiles')
         self.assertEqual(len(os.listdir(tiles)), 1, 'one cache folder per image, shared by both viewers')
         self.assertEqual(self.v.request('/data.json')[0], 200)
 

@@ -181,7 +181,7 @@ class ViewerServer(unittest.TestCase):
                     self.assertEqual(t.shape[1], min(512, L['w'] - 512 * c))
                     self.assertEqual(t.shape[0], min(512, L['h'] - 512 * r))
         self.assertEqual(self.v.request(f'/tiles/0/{d["levels"][0]["cols"]}_0.jpg')[0], 404)
-        tiles = os.path.join(self.home, 'Library', 'Caches', 'lunaratlas', 'tiles')
+        tiles = os.path.join(S.cache_dir(self.home), 'tiles')
         self.assertTrue(os.path.isdir(tiles), 'the tile cache is under HOME')
         self.assertEqual(self.v.request(f'/tiles/0/0_0.jpg?v={d["tiles_v"]}')[0], 200)
 

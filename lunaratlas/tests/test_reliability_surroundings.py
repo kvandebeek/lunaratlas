@@ -133,7 +133,7 @@ class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
 
     def test_the_viewer_command_line_reports_a_read_only_cache_without_a_traceback(self):
         home = os.path.join(self.tmp, 'home')
-        ro = os.path.join(home, 'Library', 'Caches', 'lunaratlas', 'tiles')
+        ro = os.path.join(S.cache_dir(home), 'tiles')
         os.makedirs(ro)
         self.assertTrue(readonly(ro))
         self.addCleanup(readonly, ro, 0o755)

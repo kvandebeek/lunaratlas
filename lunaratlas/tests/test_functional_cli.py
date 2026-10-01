@@ -629,7 +629,7 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         silent = av.ExportJob([sys.executable, '-c', 'pass'], out + '3')          # exit 0 but nothing written
         self._wait(silent)
         self.assertEqual(silent.status()['state'], 'failed')
-        self.assertEqual(silent.status()['error'], 'exit code 0')
+        self.assertEqual(silent.status()['error'], 'o.txt3 finished without saving its result')
 
     def _wait(self, job):
         import time

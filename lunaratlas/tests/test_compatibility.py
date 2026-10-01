@@ -315,10 +315,19 @@ class Platforms(unittest.TestCase):
             self.assertTrue(av.CACHE.endswith(os.path.join('Library', 'Caches', 'LunarAtlas', 'tiles')))
 
 
+def _without_cpu_scaled_defaults(text):
+    """MOSAIC_WORKERS and MOSAIC_CLASSIFIER_WORKERS default to a count derived from os.cpu_count(), so the
+    committed .env.example (generated on one machine) and a freshly generated one agree on every setting except
+    these two, which differ by core count alone."""
+    return re.sub(r'^# (MOSAIC_WORKERS|MOSAIC_CLASSIFIER_WORKERS)=\d+$', r'# \1=N', text, flags=re.MULTILINE)
+
+
 class SettingsDocumentation(unittest.TestCase):
     def test_env_example_is_generated_from_the_registry(self):
         with open(os.path.join(S.ROOT, '.env.example'), encoding='utf-8') as fh:
-            self.assertEqual(fh.read(), ts.example(), 'run `python3 tool_settings.py --example`')
+            committed = fh.read()
+        self.assertEqual(_without_cpu_scaled_defaults(committed), _without_cpu_scaled_defaults(ts.example()),
+                         'run `python3 tool_settings.py --example`')
 
     def test_readme_counts(self):
         with open(os.path.join(S.PKG, 'README.md'), encoding='utf-8') as fh:
