@@ -76,7 +76,8 @@ class Fonts:
             for f in damaged:
                 os.remove(os.path.join(d, f))
             files = []
-        legacy = [f for f in os.listdir(FONT_DIR) if f.lower().endswith('.ttf') and self._slug(f.split('[')[0].split('-')[0]) == self._slug(family)]
+        legacy = [f for f in os.listdir(FONT_DIR) if f.lower().endswith('.ttf') and self._slug(f.split('[')[0].split('-')[0]) == self._slug(family)] \
+            if os.path.isdir(FONT_DIR) else []
         if not files and legacy and not damaged:         # fonts downloaded during the design mockups
             os.makedirs(d, exist_ok=True)
             for f in legacy:
