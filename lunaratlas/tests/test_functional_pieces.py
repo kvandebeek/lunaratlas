@@ -301,6 +301,7 @@ class ExportOptions(S.TempDir, unittest.TestCase):
         self.assertTrue(out.endswith('_atlas_a_rm_-rf_whoami.tif'), out)
 
 
+@S.needs_all
 class ExportOptionsAgainstTheRealParser(S.TempDir, unittest.TestCase):
     """bugs-overview BUG-01, acceptance: the dialog's choices must win over conflicting environment defaults, run
     through the real argument parser and a real export, not just checked for flag presence in the argv list."""

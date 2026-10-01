@@ -29,6 +29,7 @@ import atlas_render as ar
 import atlas_view as av
 
 
+@S.needs_reference
 class ReferenceData(S.TempDir, unittest.TestCase):
     """The one-time costs: reading the albedo mosaic and the LOLA elevation, and rendering the reference."""
 
@@ -359,6 +360,7 @@ class ViewerLatency(S.TempDir, unittest.TestCase):
 class Memory(S.TempDir, unittest.TestCase):
     """Nothing that runs per image may keep growing: a batch of exports must not climb."""
 
+    @S.needs_features
     def test_repeated_layout_and_drawing_frees_its_memory(self):
         geo = S.truth_geometry()
         feats = S.projected_features(geo)
@@ -406,6 +408,7 @@ class Memory(S.TempDir, unittest.TestCase):
         tracemalloc.stop()
         self.assertLess(grown, 8_000_000, f'{grown / 1e6:.1f} MB retained after 3 more exports')
 
+    @S.needs_features
     def test_the_gazetteer_is_not_re_read_per_image(self):
         import atlas_names as an
         gc.collect()
