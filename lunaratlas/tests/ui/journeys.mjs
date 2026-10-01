@@ -908,9 +908,9 @@ const J = {
     // the photo being worked on: nothing without a file or a path, the server's own thumbnail and the file's name
     // once there is a path, the browser's own copy of a small JPEG before the upload answers, and no empty frame
     // left behind by one that cannot be shown
-    await b.js(`path = null; file = null; showPhoto();`);
+    await b.js(`(() => { path = null; file = null; showPhoto(); })()`);
     await ok(await b.js(`document.getElementById('wthumb').hidden`), 'no thumbnail box without a file or a path');
-    await b.js(`path = ${JSON.stringify(args.image)}; showPhoto();`);
+    await b.js(`(() => { path = ${JSON.stringify(args.image)}; showPhoto(); })()`);
     await b.until(`(() => { const i = document.getElementById('wimg'); return !document.getElementById('wthumb').hidden && i.complete && i.naturalWidth > 0; })()`,
                   10000, 'the thumbnail of the photo being worked on');
     const named = await b.js(`document.getElementById('wname').textContent`);
@@ -926,7 +926,7 @@ const J = {
       file = new File([new Uint8Array(64)], 'mosaic.tif'); path = null; showPhoto();
     })()`);
     await ok(await b.js(`document.getElementById('wthumb').hidden`), 'a TIFF gets no local preview: the browser cannot decode one');
-    await b.js(`path = '/not/an/image/in/the/work/folder.tif'; showPhoto();`);
+    await b.js(`(() => { path = '/not/an/image/in/the/work/folder.tif'; showPhoto(); })()`);
     await b.until(`document.getElementById('wthumb').hidden`, 10000, 'the empty frame gone');
     await ok(true, 'a thumbnail the server cannot make leaves no empty frame, and the name stays');
     await ok(await b.js(`document.getElementById('wname').textContent.length > 0`), 'the name of a photo that cannot be shown is still there');
