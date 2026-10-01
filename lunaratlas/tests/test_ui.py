@@ -64,7 +64,11 @@ class UI(S.TempDir):
         self.addCleanup(self.srv.server_close)
         self.addCleanup(self.srv.shutdown)
         self.addCleanup(self.app.stop_jobs)
-        self.base = f'http://localhost:{self.srv.server_port}'
+        # 'localhost' resolves to ::1 before 127.0.0.1 on Windows; the server only binds 127.0.0.1 (atlas_view's
+        # BaseHTTPServer default), so every request the page itself makes -- not just this harness's own --
+        # would wait out an IPv6 connect-refused timeout first (measured ~2s/request, the cause of widespread
+        # "timed out waiting for page/the X journey" failures and of test_e2e's 1215s outlier, see _support.py)
+        self.base = f'http://127.0.0.1:{self.srv.server_port}'
         self.out = os.environ.get('LUNARATLAS_UI_OUT') or os.path.join(self.tmp, 'ui')
 
     def call(self, method, path, body=b''):
