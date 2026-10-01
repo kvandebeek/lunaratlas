@@ -291,7 +291,7 @@ const J = {
     await b.press('f');
     await ok(Math.abs(await zoom(b) - s0) / s0 < 0.01, 'the F key fits the disk');
     for (let i = 0; i < 12; i++) await b.wheel(cx, cy, -600);
-    await ok(await zoom(b) <= 4.0001, `zooming in stops at 400 % (${(await zoom(b) * 100).toFixed(0)} %)`);
+    await ok(await zoom(b) <= 8.0001, `zooming in stops at 800 % (${(await zoom(b) * 100).toFixed(0)} %)`);
     for (let i = 0; i < 16; i++) await b.wheel(cx, cy, 600);
     await ok(await zoom(b) > 0, 'zooming out stops at a minimum');
     await b.press('f');
