@@ -16,4 +16,5 @@ lunaratlas/REMAINING_WORK.md
 # packaged-app builds (packaging/build.py)
 build/
 dist/
+.venv-build/
 
