@@ -39,7 +39,6 @@ class FontsTest(unittest.TestCase):
         self.assertTrue(f.has_italic)
         self.assertNotEqual(f.get(400, 20, True).getbbox('Rima'), f.get(400, 20, False).getbbox('Rima'))
 
-    @unittest.skipUnless(os.path.isdir(os.path.join(S.DATA, 'fonts', 'barlow')), 'Barlow not in lunaratlas/data/fonts')
     def test_static_family_picks_the_nearest_weight(self):
         f = ar.Fonts('Barlow', S.quiet)
         self.assertFalse(any(x['variable'] for x in f.files))

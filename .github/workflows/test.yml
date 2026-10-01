@@ -63,11 +63,9 @@ jobs:
           from atlas_geo import Reference
           from atlas_names import load_features
           from atlas_closeup import lola_path
-          from atlas_render import Fonts
           Reference()
           load_features()
           lola_path(16)
-          Fonts('Barlow')
           if os.environ.get('FULL'):
               lola_path(64)
           EOF
