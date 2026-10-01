@@ -119,6 +119,7 @@ class LimbAndQuality(unittest.TestCase):
 
 
 @S.needs_font
+@S.needs_features
 class LabelLayout(unittest.TestCase):
     """Placing every name is the step that grows with the gazetteer: it must stay vectorised."""
 

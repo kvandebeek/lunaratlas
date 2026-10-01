@@ -124,6 +124,7 @@ class LocateFailureClassification(S.TempDir, unittest.TestCase):
     fall back to a close-up search. A download failure building the reference map (or any other fatal error
     inside locate()) must terminate the command instead of triggering that blind, expensive fallback."""
 
+    @S.needs_relief
     def test_a_download_failure_inside_locate_is_not_mistaken_for_no_limb(self):
         img, geo = S.moon_image(self.tmp)
         os.remove(ag.sidecar_path(img))                     # a fresh image: geometry() must actually call locate()

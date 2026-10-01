@@ -34,6 +34,7 @@ class CopyName(unittest.TestCase):
                 copy_name(bad, '')
 
 
+@S.needs_features
 class NightSideForACloseupWithNoCaptureTime(S.TempDir):
     """BUG-06: a close-up with no usable capture time made sun_elevation_light() return None; night_side() then
     built a 0-D NumPy array from it and page_data() iterated it with zip(), raising instead of opening the page."""

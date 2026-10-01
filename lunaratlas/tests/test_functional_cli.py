@@ -567,6 +567,7 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         av.build_tiles(img, raw, S.quiet)
         self.assertTrue(os.path.getsize(tile) > 0)
 
+    @S.needs_relief
     def test_a_pyramid_with_a_tile_that_could_not_be_written_has_no_manifest(self):
         from unittest import mock
         img, geo = S.moon_image(self.tmp, name='full.tif')
@@ -578,6 +579,7 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
         self.assertIn('could not be written', str(cm.exception))
         self.assertFalse(os.path.exists(os.path.join(av.tile_dir(img), 'meta.json')), 'no manifest for a pyramid with holes')
 
+    @S.needs_relief
     def test_opening_an_image_again_does_not_decode_it(self):
         from unittest import mock
         img, geo = S.moon_image(self.tmp, name='again.tif')
@@ -595,6 +597,7 @@ class ViewerServerSide(S.TempDir, unittest.TestCase):
             av.Session(img, geo2, side, None, S.quiet)
         self.assertEqual(len(reads), 1)
 
+    @S.needs_relief
     def test_page_data(self):
         img, geo = S.moon_image(self.tmp)
         raw = cv2.imread(img, -1)

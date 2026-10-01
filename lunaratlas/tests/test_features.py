@@ -488,6 +488,7 @@ class Batch(S.TempDir):
         self.assertRegex(out, r'a_moon\.tif +skipped')
 
 
+@S.needs_relief
 class RecentExcludesExports(S.TempDir):
     """bugs-overview BUG-13: App.recent() used to list every image file, including LunarAtlas's own
     IMAGE_atlas….ext exports, as an unsolved photo -- sharing atlas_paths.is_export_name with batch_images()."""

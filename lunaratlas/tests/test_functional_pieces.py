@@ -326,6 +326,7 @@ class ExportOptionsAgainstTheRealParser(S.TempDir, unittest.TestCase):
         self.assertEqual(img_out.shape[0], 300, 'LUNARATLAS_MAX_SIZE=50 did not shrink a full-size export')
 
 
+@S.needs_features
 class CommandLineHelpers(S.TempDir, unittest.TestCase):
     """lunaratlas.find_feature, sun_elevation_light and optics_text, checked directly."""
 

@@ -92,6 +92,7 @@ class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
         self.assertIn('Permission denied', str(cm.exception))
         self.assertFalse(os.path.exists(ag.sidecar_path(p)))
 
+    @S.needs_all
     def test_an_export_to_a_read_only_folder_says_so(self):
         ro = os.path.join(self.tmp, 'ro2')
         os.makedirs(ro)
@@ -149,6 +150,7 @@ class AwkwardNames(S.TempDir, unittest.TestCase):
     def setUp(self):
         super().setUp()
 
+    @S.needs_relief
     def test_names_with_spaces_accents_and_dots_work_end_to_end(self):
         for name in ('my moon é.tif', 'Mare Crisium – Ångström.tif', '2026.09.25.2130.tif', 'a b c d e.tif',
                      "Chang'e 3 – Yutu (2026-09-23).tif"):
@@ -251,6 +253,7 @@ class ThingsThatAreNotImages(S.TempDir, unittest.TestCase):
             fh.write(np.random.default_rng(0).integers(0, 256, 20000, dtype=np.uint8).tobytes())
         self.refuse(p)
 
+    @S.needs_relief
     def test_a_truncated_tiff(self):
         p = os.path.join(self.tmp, 'cut.tif')
         S.write_image(p, W=200, H=180, cx=100.0, cy=90.0, R=70.0)
@@ -411,6 +414,7 @@ class HttpSurface(S.TempDir, unittest.TestCase):
         self.alive()
 
 
+@S.needs_relief
 class Interrupted(S.TempDir, unittest.TestCase):
     """Killed half-way through: a Ctrl-C during a write or an export must leave the old file and nothing else."""
 
