@@ -18,6 +18,7 @@ import atlas_ephem as ae
 import atlas_geo as ag
 import atlas_render as ar
 import atlas_view as av
+from atlas_paths import cv_imread, cv_imwrite
 import tool_settings as ts
 
 VIEWER_JS = os.path.join(S.PKG, 'viewer', 'viewer.js')
@@ -47,13 +48,13 @@ class InputFormats(S.TempDir, unittest.TestCase):
         for name, dtype, ch, params in FORMATS:
             with self.subTest(name):
                 p = self.write(name, dtype, ch, params)
-                raw = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+                raw = cv_imread(p, cv2.IMREAD_UNCHANGED)
                 self.assertEqual(raw.dtype, dtype)
                 for fmt in ('tiff', 'jpg'):
                     out = os.path.join(self.tmp, f'{name}.out.{fmt}')
                     code, log = S.run_main('export', p, '-o', out, '--no-grid', '--layers', 'none')   # tonality, not name shades
                     self.assertIsNone(code, log)
-                    im = cv2.imread(out, cv2.IMREAD_UNCHANGED)
+                    im = cv_imread(out, cv2.IMREAD_UNCHANGED)
                     self.assertEqual(im.shape, (1000, 1100, 3))
                     self.assertEqual(im.dtype, np.uint8 if fmt == 'jpg' else np.uint16)
                     # the tonality is kept: the disk centre is as bright in the output as in the input
@@ -64,13 +65,13 @@ class InputFormats(S.TempDir, unittest.TestCase):
 
     def test_float_data_scaled_to_16_bit(self):
         p = os.path.join(self.tmp, 'float_full.tif')
-        cv2.imwrite(p, (self.img01 * 65535).astype(np.float32))             # already 0-65535
+        cv_imwrite(p, (self.img01 * 65535).astype(np.float32))             # already 0-65535
         S.locate_as(p, self.geo)
         out = os.path.join(self.tmp, 'ff.tif')
         code, log = S.run_main('export', p, '-o', out, '--layers', 'none', '--no-grid', '--no-info')
         self.assertIsNone(code, log)
         self.assertIn('0–65535 scale', log)
-        got = cv2.imread(out, cv2.IMREAD_UNCHANGED)[..., 0].astype(float)
+        got = cv_imread(out, cv2.IMREAD_UNCHANGED)[..., 0].astype(float)
         self.assertLess(np.abs(got - self.img01 * 65535).max(), 1.01)
 
     def test_quality_gate_on_every_format(self):
@@ -86,10 +87,10 @@ class InputFormats(S.TempDir, unittest.TestCase):
         for name, dtype, ch, params in FORMATS:
             with self.subTest(name):
                 p = self.write(name, dtype, ch, params)
-                raw = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+                raw = cv_imread(p, cv2.IMREAD_UNCHANGED)
                 with mock.patch.object(av, 'CACHE', os.path.join(self.tmp, 'cache')):
                     levels = av.build_tiles(p, raw, S.quiet)
-                    t = cv2.imread(os.path.join(av.tile_dir(p), '0', '1_1.jpg'))
+                    t = cv_imread(os.path.join(av.tile_dir(p), '0', '1_1.jpg'))
                 self.assertEqual(len(levels), 3)
                 self.assertEqual(t.shape, (488, 512, 3))
                 self.assertGreater(t.mean(), 20)                              # stretched for display, not black
@@ -230,7 +231,7 @@ class ViewerMatchesExport(unittest.TestCase):
 class Sidecars(S.TempDir, unittest.TestCase):
     def image(self):
         p = os.path.join(self.tmp, 'a.tif')
-        cv2.imwrite(p, np.zeros((10, 10), np.uint8))
+        cv_imwrite(p, np.zeros((10, 10), np.uint8))
         return p
 
     def test_older_geometry_without_optional_fields(self):
@@ -269,7 +270,7 @@ class Sidecars(S.TempDir, unittest.TestCase):
     def test_sidecar_is_ascii_so_any_locale_reads_it(self):
         # Windows opens text in the ANSI code page unless told otherwise; load_geo does not pass an encoding
         p = os.path.join(self.tmp, 'Mare Crisium – Ångström é.tif')
-        cv2.imwrite(p, np.zeros((10, 10), np.uint8))
+        cv_imwrite(p, np.zeros((10, 10), np.uint8))
         S.locate_as(p, S.truth_geometry())
         import threading
         av.write_edits(p, dict(shapes=[dict(kind='text', x=1, y=1, label='Grimaldi · Riccioli — 月')]), threading.Lock())

@@ -27,6 +27,7 @@ import cv2
 import numpy as np
 
 import atlas_geo as ag
+from atlas_paths import cv_imread, cv_imwrite
 
 
 def wait_for(fn, timeout=60, what='condition'):
@@ -164,8 +165,8 @@ class BatchOfImages(Journey):
         plain = os.path.join(self.tmp, 'plain.png')
         self.assertEqual(self.cli('export', path, '--no-info', '-o', plain).returncode, 0)
         # the info block adds pixels in the bottom-left corner, where it is drawn
-        a = cv2.imread(out, cv2.IMREAD_UNCHANGED)
-        b = cv2.imread(plain, cv2.IMREAD_UNCHANGED)
+        a = cv_imread(out, cv2.IMREAD_UNCHANGED)
+        b = cv_imread(plain, cv2.IMREAD_UNCHANGED)
         self.assertEqual(a.shape, b.shape)
         corner = (slice(a.shape[0] - 220, a.shape[0]), slice(0, 420))
         self.assertFalse(np.array_equal(a[corner], b[corner]), 'the info block was drawn in the corner')
@@ -189,11 +190,11 @@ class TheWholeLoop(Journey):
         out = os.path.join(self.tmp, 'first.png')
         r = self.cli('export', self.img, '-o', out)
         self.assertEqual(r.returncode, 0, r.stderr)
-        im = cv2.imread(out, cv2.IMREAD_UNCHANGED)
+        im = cv_imread(out, cv2.IMREAD_UNCHANGED)
         self.assertEqual((im.shape, im.dtype), ((1000, 1100, 3), np.uint16))
 
         # the user replaces the image (a crop, a rotation) without touching the sidecar
-        cv2.imwrite(self.img, np.rot90(cv2.imread(self.img, cv2.IMREAD_UNCHANGED)))
+        cv_imwrite(self.img, np.rot90(cv_imread(self.img, cv2.IMREAD_UNCHANGED)))
         r = self.cli('export', self.img, '-o', os.path.join(self.tmp, 'stale.png'))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('image changed since it was located', r.stdout)
@@ -201,8 +202,8 @@ class TheWholeLoop(Journey):
         second = S.sidecar(self.img)
         self.assertNotEqual(second['image_signature'], first['image_signature'])
         self.assertEqual((second['width'], second['height']), (1000, 1100), 'the rotated image is 1000 x 1100')
-        self.assertNotEqual(cv2.imread(out, cv2.IMREAD_UNCHANGED).shape,
-                            cv2.imread(os.path.join(self.tmp, 'stale.png'), cv2.IMREAD_UNCHANGED).shape)
+        self.assertNotEqual(cv_imread(out, cv2.IMREAD_UNCHANGED).shape,
+                            cv_imread(os.path.join(self.tmp, 'stale.png'), cv2.IMREAD_UNCHANGED).shape)
         self.assertEqual(self.leftovers(), [])
 
     def test_the_pair_survives_being_copied_to_an_archive(self):
@@ -222,8 +223,8 @@ class TheWholeLoop(Journey):
         self.assertIn('1100 x 1000 px', r.stdout)
         second = os.path.join(self.tmp, 'copy.png')
         self.assertEqual(self.cli('export', other, '-o', second).returncode, 0)
-        np.testing.assert_array_equal(cv2.imread(first, cv2.IMREAD_UNCHANGED),
-                                      cv2.imread(second, cv2.IMREAD_UNCHANGED))
+        np.testing.assert_array_equal(cv_imread(first, cv2.IMREAD_UNCHANGED),
+                                      cv_imread(second, cv2.IMREAD_UNCHANGED))
         # and the original's sidecar was not changed by exporting the copy
         self.assertNotIn('edits', S.sidecar(self.img))
 
@@ -318,7 +319,7 @@ class ViewerJourney(Journey):
         s = self.wait_export()
         self.assertEqual(s['state'], 'done', s)
         self.assertTrue(any('1 of your drawings' in line for line in s['lines']), s['lines'])
-        im = cv2.imread(s['output'], cv2.IMREAD_UNCHANGED)
+        im = cv_imread(s['output'], cv2.IMREAD_UNCHANGED)
         self.assertEqual(im.shape, (1000, 1100, 3))
         # the ring is really on the pixels: red (BGR: the high channel) where it passes, above the centre
         y, x = int(round(self.cy)), int(round(self.cx))
@@ -337,8 +338,8 @@ class ViewerJourney(Journey):
         r = self.cli('export', self.img, '-o', hid)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('1 hidden in the viewer', r.stdout)
-        a = cv2.imread(base, cv2.IMREAD_UNCHANGED)
-        b = cv2.imread(hid, cv2.IMREAD_UNCHANGED)
+        a = cv_imread(base, cv2.IMREAD_UNCHANGED)
+        b = cv_imread(hid, cv2.IMREAD_UNCHANGED)
         self.assertEqual(a.shape, b.shape)
         self.assertFalse(np.array_equal(a, b), 'hiding a name must change the export')
         # the letters themselves are gone where Copernicus was, not merely somewhere else on the disk

@@ -22,6 +22,7 @@ import cv2
 import numpy as np
 
 import atlas_geo as ag
+from atlas_paths import cv_imread, cv_imwrite
 
 
 def check_geometry(test, geo, truth, w, h, px=1.0, deg=0.1):
@@ -88,7 +89,7 @@ class CommandLine(unittest.TestCase):
         r = S.run_cli('export', self.img, home=self.home)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         out = os.path.join(self.tmp, 'my moon é_atlas.tif')
-        im = cv2.imread(out, cv2.IMREAD_UNCHANGED)
+        im = cv_imread(out, cv2.IMREAD_UNCHANGED)
         self.assertEqual((im.shape, im.dtype), ((1000, 1100, 3), np.uint16))
         for step in ('positioning from', 'view:', 'labels placed', 'labels drawn', 'wrote'):
             self.assertIn(step, r.stdout)              # the viewer's progress bar looks for these
@@ -96,7 +97,7 @@ class CommandLine(unittest.TestCase):
         r = S.run_cli('export', self.img, '--around', 'Tycho', '--size', '500x400', '-o', jpg, '--quality', '80',
                       home=self.home)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(cv2.imread(jpg).shape, (400, 500, 3))
+        self.assertEqual(cv_imread(jpg).shape, (400, 500, 3))
 
     def test_5_export_errors_are_messages_not_tracebacks(self):
         for args in (('--scale', '2'), ('--format', 'png', '-o', os.path.join(self.tmp, 'x.jpg')),
@@ -344,7 +345,7 @@ class ViewerServer(unittest.TestCase):
         s = self.wait_export()
         self.assertEqual(s['state'], 'done', s)
         self.assertEqual(s['output'], os.path.join(self.tmp, 'moon_atlas.png'))
-        im = cv2.imread(s['output'], cv2.IMREAD_UNCHANGED)
+        im = cv_imread(s['output'], cv2.IMREAD_UNCHANGED)
         self.assertEqual((im.shape, im.dtype), ((500, 550, 3), np.uint16))
         self.assertEqual(s['size_bytes'], os.path.getsize(s['output']))
         self.assertTrue(any('1 of your drawings' in line for line in s['lines']), s['lines'])
@@ -451,7 +452,7 @@ class CloseUp(unittest.TestCase):
         self.assertGreater(ok.mean(), 0.99)
         img = cv2.GaussianBlur(img, (0, 0), 0.8) / max(float(img.max()), 1e-6)
         img = img + np.random.default_rng(1).normal(0, 0.004, img.shape)
-        cv2.imwrite(name, np.clip(img * 50000 + 800, 0, 65535).astype(np.uint16))
+        cv_imwrite(name, np.clip(img * 50000 + 800, 0, 65535).astype(np.uint16))
         home = os.path.join(tmp, 'home')
         os.makedirs(home)
         r = S.run_cli('locate', name, home=home, timeout=S.budget(600))

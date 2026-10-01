@@ -162,7 +162,7 @@ def publish(tmp, path):
 # mojibake'd into a different filename, so the read finds nothing and the write lands somewhere else. Python's
 # own open() is Unicode-correct on every platform, so read and write the bytes through it instead and hand cv2
 # only the already-open data.
-def cv_imread(path, flag=cv2.IMREAD_UNCHANGED):
+def cv_imread(path, flag=cv2.IMREAD_COLOR):     # cv2.imread's own default: no flag means "always 3-channel BGR"
     try:
         data = np.fromfile(path, np.uint8)      # cv2.imread's own contract: None on any failure, never raises
     except OSError:

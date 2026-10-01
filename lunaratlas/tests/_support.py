@@ -283,8 +283,12 @@ def subprocess_env(home):
     """The environment for a CLI subprocess: its own HOME (tile cache), no browser, unbuffered output.
     atlas_paths.user_dir() reads XDG_CACHE_HOME/XDG_DATA_HOME on Linux and LOCALAPPDATA on Windows ahead of HOME,
     so without overriding those too the subprocess's cache would land under the test process's own HOME instead
-    of this test's home, and a test asserting the cache lives under `home` would fail on those platforms only."""
+    of this test's home, and a test asserting the cache lives under `home` would fail on those platforms only.
+    PYTHONIOENCODING: a console on a non-UTF-8 locale (Windows with a legacy ANSI code page) would otherwise have
+    the child write its own default encoding, which the parent's encoding='utf-8' (see run_cli/Viewer) could not
+    decode back correctly."""
     env = dict(os.environ, HOME=home, PYTHONUNBUFFERED='1', LUNARATLAS_VIEW_OPEN='0', LUNARATLAS_SELFTEST='1',
+               PYTHONIOENCODING='utf-8',
                LOCALAPPDATA=os.path.join(home, 'AppData', 'Local'),
                XDG_CACHE_HOME=os.path.join(home, '.cache'),
                XDG_DATA_HOME=os.path.join(home, '.local', 'share'))
@@ -293,8 +297,8 @@ def subprocess_env(home):
 
 
 def run_cli(*argv, home, timeout=300, cwd=None):
-    return subprocess.run([sys.executable, CLI, *map(str, argv)], capture_output=True, text=True, timeout=timeout,
-                          env=subprocess_env(home), cwd=cwd)
+    return subprocess.run([sys.executable, CLI, *map(str, argv)], capture_output=True, text=True, encoding='utf-8',
+                          timeout=timeout, env=subprocess_env(home), cwd=cwd)
 
 
 def free_port():
@@ -309,7 +313,7 @@ class Viewer:
     def __init__(self, image, home, port=None, extra=()):
         self.proc = subprocess.Popen([sys.executable, CLI, 'view', image, '--no-open', '--port', str(port or free_port()),
                                       *extra], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                     env=subprocess_env(home))
+                                     encoding='utf-8', env=subprocess_env(home))
         self.lines, self.url, self.token = [], None, ''
         t0 = time.time()
         while time.time() - t0 < 120:

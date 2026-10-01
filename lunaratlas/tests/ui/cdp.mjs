@@ -62,6 +62,7 @@ export class Browser {
       catch { /* not up yet */ }
       if (!page) await sleep(100);
     }
+    if (!page) { proc.kill(); throw new Error('Chrome did not start'); }   // DevTools came up with no page tab
     const b = new Browser(proc, page.webSocketDebuggerUrl, width, height);
     await b.open();
     return b;
