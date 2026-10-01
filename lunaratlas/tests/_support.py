@@ -324,7 +324,10 @@ class Viewer:
             if 'viewer: http://' in line:
                 self.url = line.split('viewer: ', 1)[1].split()[0]
                 self.url, _, self.token = self.url.partition('?t=')       # --no-open prints the way in: with the token
-                self.url = self.url.rstrip('/')
+                # 'localhost' resolves to ::1 first on Windows; the server only binds 127.0.0.1, so every request
+                # would wait out a ~2s IPv6-connect-refused timeout before falling back (measured: 600 requests in
+                # test_sustained_requests this way cost ~20 minutes instead of a few seconds)
+                self.url = self.url.rstrip('/').replace('://localhost:', '://127.0.0.1:')
                 break
         if self.url is None:
             self.close()

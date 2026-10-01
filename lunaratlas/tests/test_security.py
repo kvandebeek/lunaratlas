@@ -598,7 +598,9 @@ class ReleaseInputs(unittest.TestCase):
             open(os.path.join(app, f), 'wb').write(macho)
         for f in ('Contents/Info.plist', 'Contents/Resources/data.json'):
             open(os.path.join(app, f), 'wb').write(b'<plist>')
-        order = [os.path.relpath(p, app) for p in build.signables(app)]
+        # os.path.relpath uses the native separator; this checks the macOS bundle-signing order algorithm, not
+        # path formatting, so compare with '/' regardless of the host running the test
+        order = [os.path.relpath(p, app).replace(os.sep, '/') for p in build.signables(app)]
         self.assertEqual(sorted(order), sorted(['Contents/MacOS/X', 'Contents/Frameworks/Y.framework/Versions/A/Y',
                                                 'Contents/Frameworks/Y.framework', 'Contents/Resources/lib/z.so']))
         self.assertLess(order.index('Contents/Frameworks/Y.framework/Versions/A/Y'), order.index('Contents/Frameworks/Y.framework'),

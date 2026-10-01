@@ -38,12 +38,23 @@ import lunaratlas as ma
 
 
 def readonly(path, mode=0o555):
-    """Make `path` read-only (or restore it); True when this platform allowed it."""
+    """Make the directory `path` read-only (or restore it with mode=0o755); True when a new file inside it is
+    now actually refused. On Windows, os.chmod on a directory succeeds without raising, but does not by itself
+    stop a new file from being created inside it (unlike a POSIX permission bit), so a bare "did chmod raise"
+    check would wrongly report success on a platform that does not enforce it."""
     try:
         os.chmod(path, mode)
-        return True
     except OSError:
         return False
+    if mode != 0o555:          # restoring, not testing: the chmod above is all that matters
+        return True
+    probe = os.path.join(path, '.readonly_probe')
+    try:
+        open(probe, 'w').close()
+        os.remove(probe)
+        return False
+    except OSError:
+        return True
 
 
 class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
@@ -84,7 +95,8 @@ class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
         os.makedirs(ro)
         p = os.path.join(ro, 'a.tif')
         cv2.imwrite(p, np.zeros((20, 20), np.uint8))
-        self.assertTrue(readonly(ro), 'this platform must allow chmod for the test to mean anything')
+        if not readonly(ro):
+            self.skipTest('this platform does not stop a write into a read-only folder')
         self.addCleanup(readonly, ro, 0o755)
         with self.assertRaises(SystemExit) as cm:
             ag.write_json_atomic(ag.sidecar_path(p), dict(a=1))
@@ -96,7 +108,8 @@ class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
     def test_an_export_to_a_read_only_folder_says_so(self):
         ro = os.path.join(self.tmp, 'ro2')
         os.makedirs(ro)
-        self.assertTrue(readonly(ro))
+        if not readonly(ro):
+            self.skipTest('this platform does not stop a write into a read-only folder')
         self.addCleanup(readonly, ro, 0o755)
         code, out = S.run_main('export', self.img, '-o', os.path.join(ro, 'x.png'))
         self.assertIn('cannot write', str(code))
@@ -121,7 +134,8 @@ class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
     def test_a_tile_cache_that_cannot_be_written_is_a_message(self):
         cache = os.path.join(self.tmp, 'cache')
         os.makedirs(cache)
-        self.assertTrue(readonly(cache))
+        if not readonly(cache):
+            self.skipTest('this platform does not stop a write into a read-only folder')
         self.addCleanup(readonly, cache, 0o755)
         old = av.CACHE
         av.CACHE = cache
@@ -136,7 +150,8 @@ class NoRoomOrNoPermission(S.TempDir, unittest.TestCase):
         home = os.path.join(self.tmp, 'home')
         ro = os.path.join(S.cache_dir(home), 'tiles')
         os.makedirs(ro)
-        self.assertTrue(readonly(ro))
+        if not readonly(ro):
+            self.skipTest('this platform does not stop a write into a read-only folder')
         self.addCleanup(readonly, ro, 0o755)
         r = S.run_cli('view', self.img, '--no-open', '--port', str(S.free_port()), home=home, timeout=S.budget(120))
         self.assertNotEqual(r.returncode, 0)
@@ -476,6 +491,10 @@ class Interrupted(S.TempDir, unittest.TestCase):
     @S.needs_all
     def test_the_viewer_stops_on_ctrl_c_and_keeps_the_edits_it_was_given(self):
         import signal
+        if sys.platform == 'win32':
+            # Popen.send_signal(SIGINT) only works on Windows for a process started with
+            # CREATE_NEW_PROCESS_GROUP, which S.Viewer does not set; it otherwise raises ValueError
+            self.skipTest('SIGINT cannot be sent this way on Windows')
         home = os.path.join(self.tmp, 'home')
         os.makedirs(home)
         v = S.Viewer(self.img, home)
@@ -490,6 +509,8 @@ class Interrupted(S.TempDir, unittest.TestCase):
     def test_an_export_killed_half_way_leaves_the_previous_output_intact(self):
         import signal
         import time
+        if not hasattr(signal, 'SIGKILL'):
+            self.skipTest('no SIGKILL on this platform')
         out = os.path.join(self.tmp, 'out.png')
         self.assertIsNone(S.run_main('export', self.img, '-o', out)[0])
         first = open(out, 'rb').read()
