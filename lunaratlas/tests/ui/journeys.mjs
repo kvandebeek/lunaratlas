@@ -386,7 +386,7 @@ const J = {
     let empty = null;
     for (let i = 0; i < 40 && !empty; i++) {
       const x = cx + (Math.random() - 0.5) * R, y = cy + (Math.random() - 0.5) * R;
-      if (await b.js(`(() => { __atlas.render(); return !__atlas.placed.some((q) => Math.abs(q.x - ${x}) < 90 && Math.abs(q.y - ${y}) < 40) && document.elementFromPoint(${x}, ${y}).id === 'map'; })()`)) empty = [x, y];
+      if (await b.js(`(() => { __atlas.render(); return !__atlas.placed.some((q) => Math.abs(q.x - ${x}) < 90 && Math.abs(q.y - ${y}) < 40) && !__atlas.hitFeature(${x}, ${y}) && document.elementFromPoint(${x}, ${y}).id === 'map'; })()`)) empty = [x, y];
     }
     if (empty) {
       await b.clickAt(q.x, q.y);
@@ -877,7 +877,7 @@ const J = {
       ];
       for (const [label, lines] of sequence) {
         readLines(lines);
-        toStage(st.i);
+        toStage(window.__app.st.i);
         renderStages();
         out.push([label, snap()]);
       }

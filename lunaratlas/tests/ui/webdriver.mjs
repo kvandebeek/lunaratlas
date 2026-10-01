@@ -128,7 +128,7 @@ export class WebDriverBrowser extends Browser {
   async exec(body, args = []) {
     const script = `${HOOK}
 const done = arguments[arguments.length - 1], args = [...arguments].slice(0, -1);
-Promise.resolve().then(async () => { ${body} }).then((v) => done({ v, ...__wdDrain() }), (e) => done({ x: String((e && e.stack) || e), ...__wdDrain() }));`;
+Promise.resolve().then(async () => { ${body} }).then((v) => done({ v, ...__wdDrain() }), (e) => done({ x: e ? (e.name || 'Error') + ': ' + (e.message || e) + ' | ' + (e.stack || '') : String(e), ...__wdDrain() }));`;
     const r = await this.cmd('POST', '/execute/async', { script, args });
     if (!r) return undefined;
     this.errors.push(...(r.e || []));

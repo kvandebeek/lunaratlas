@@ -65,9 +65,10 @@ class Fonts:
             if files:
                 return self._describe(b, files)
         d = os.path.join(FONT_DIR, self._slug(family))
-        os.makedirs(d, exist_ok=True)
         pending = os.path.join(d, '.incomplete')          # present while a download of the family is under way
-        files = [f for f in os.listdir(d) if f.lower().endswith(('.ttf', '.otf'))]
+        # not made here: a name that turns out to be neither bundled, already downloaded, nor downloadable now
+        # (may_download=False, as for a family read from someone else's sidecar) must leave no empty folder behind
+        files = [f for f in os.listdir(d) if f.lower().endswith(('.ttf', '.otf'))] if os.path.isdir(d) else []
         damaged = [f for f in files if not self._font_ok(os.path.join(d, f))]
         usable = [f for f in files if f not in damaged]            # fallback when the download cannot run
         if damaged or os.path.exists(pending):
@@ -77,6 +78,7 @@ class Fonts:
             files = []
         legacy = [f for f in os.listdir(FONT_DIR) if f.lower().endswith('.ttf') and self._slug(f.split('[')[0].split('-')[0]) == self._slug(family)]
         if not files and legacy and not damaged:         # fonts downloaded during the design mockups
+            os.makedirs(d, exist_ok=True)
             for f in legacy:
                 os.replace(os.path.join(FONT_DIR, f), os.path.join(d, f))
             files = legacy
@@ -108,6 +110,7 @@ class Fonts:
                     raise SystemExit(f'font "{family}" has no usable .ttf files on Google Fonts')
             else:
                 log(f'downloading font {family} ({len(want)} files, once)')
+                os.makedirs(d, exist_ok=True)
                 open(pending, 'w').close()
                 try:
                     for e in want:

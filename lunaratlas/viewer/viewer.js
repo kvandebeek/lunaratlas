@@ -1305,7 +1305,7 @@
     redraw();
   }
   window.addEventListener('hashchange', applyHash);
-  window.__atlas = { get placed() { return placed; }, get edits() { return E; }, get hidden() { return hiddenSet; }, get picks() { return picks; }, view, render };   // for tests/viewer_selftest.js
+  window.__atlas = { get placed() { return placed; }, get edits() { return E; }, get hidden() { return hiddenSet; }, get picks() { return picks; }, view, render, hitFeature };   // for tests/viewer_selftest.js
   resize();
   showGate();
   fetch('/edits').then((r) => r.json()).then((e) => {

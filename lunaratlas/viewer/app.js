@@ -340,3 +340,7 @@ fetch('/app/status').then((r) => r.json()).then((s) => {
 loadRecent();
 // the launcher stops a while after its last page is gone (browser mode): this page says it is still here
 setInterval(() => fetch('/app/ping').catch(() => {}), 20000);
+
+// for tests/ui/journeys.mjs: a top-level `let` is not a window property anywhere, but Chrome's CDP
+// (Runtime.evaluate) still sees the page's own lexical scope, unlike Firefox's WebDriver/Marionette sandbox
+window.__app = { get st() { return st; } };
