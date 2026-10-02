@@ -21,7 +21,18 @@ first time. This is the standard warning for any unsigned app, not a sign that a
 
 - **macOS** says *"LunarAtlas cannot be opened because it is from an unidentified developer"*. Open
   **System Settings → Privacy & Security**, scroll down, and press **Open Anyway**. You do this once.
-- **Windows** shows *"Windows protected your PC"*. Press **More info**, then **Run anyway**. Once.
+- **Windows** shows *"Windows protected your PC — Microsoft Defender SmartScreen prevented an
+  unrecognised app from starting"*, naming the publisher as unknown and advising you not to run it.
+  Press **More info**, then **Run anyway**. Once, on the installer.
+
+Both warnings mean the same thing: nobody has paid a certificate authority to vouch for the publisher.
+Neither checks whether the app is safe. If you would rather not take that on trust, verify the download's
+checksum below, or build it yourself from source — the whole thing is on GitHub.
+
+> **"LunarAtlas is damaged and can't be opened"** on macOS is a *different* message, and **Open Anyway
+> will not help**. It means the app's seal does not validate. Versions built before 1.0.1 had a broken
+> seal on the unsigned macOS builds; update to the current release. If you must run an affected build:
+> `xattr -dr com.apple.quarantine /Applications/LunarAtlas.app`
 
 If you would rather check the download first, every release has a `SHA256SUMS.txt`. Put it next to the
 file you downloaded, then:

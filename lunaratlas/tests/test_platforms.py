@@ -230,6 +230,48 @@ class PackagingNotices(S.TempDir):
         n.check_forbidden(self.tmp)                       # must not raise
 
 
+BUILD = os.path.join(S.ROOT, 'packaging', 'build.py')
+
+
+class PackagingSeal(S.TempDir):
+    """packaging/build.py: the .app is sealed again after the build wrote files into it (C-28).
+
+    PyInstaller ad-hoc signs the bundle; writing THIRD-PARTY-NOTICES.txt into Contents/Resources afterwards
+    adds a file the seal does not cover. A quarantined app whose seal does not validate is refused outright
+    ("LunarAtlas is damaged"), with no "Open Anyway" to allow it, so this must hold for unsigned builds too.
+    """
+
+    def build(self):
+        spec = importlib.util.spec_from_file_location('lunaratlas_build', BUILD)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_an_unsigned_build_is_still_sealed_ad_hoc_and_verified(self):
+        b = self.build()
+        with mock.patch.object(b, 'run') as run:
+            b.seal_macos('/tmp/LunarAtlas.app', None)
+        calls = [c.args for c in run.call_args_list]
+        self.assertEqual(calls[0], ('codesign', '--force', '--sign', '-', '/tmp/LunarAtlas.app'))
+        self.assertIn('--verify', calls[-1])              # a broken seal must fail the build, not ship
+        self.assertIn('--strict', calls[-1])
+        for c in calls:                                   # neither needs, nor may have, an identity
+            self.assertNotIn('--timestamp', c)
+            self.assertNotIn('--options', c)
+
+    def test_a_signed_build_seals_the_app_last_and_verifies(self):
+        b = self.build()
+        with mock.patch.object(b, 'run') as run, \
+             mock.patch.object(b, 'signables', return_value=['/tmp/LunarAtlas.app/Contents/MacOS/python']):
+            b.seal_macos('/tmp/LunarAtlas.app', 'Developer ID Application: Someone')
+        calls = [c.args for c in run.call_args_list]
+        self.assertEqual(calls[0][-1], '/tmp/LunarAtlas.app/Contents/MacOS/python')   # innermost first
+        self.assertEqual(calls[1][-1], '/tmp/LunarAtlas.app')                         # the bundle last
+        for c in calls[:-1]:
+            self.assertIn('--timestamp', c)
+        self.assertIn('--verify', calls[-1])
+
+
 class Startup(S.TempDir):
     """atlas_app.run: an app window when pywebview is there, else the browser; a second start hands over."""
 

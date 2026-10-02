@@ -70,6 +70,11 @@ dependency, read the diff, commit it. The workflow actions are pinned to commit 
 
 Unsigned builds work, but the first start needs the user's permission:
 - **macOS:** "LunarAtlas cannot be opened" → System Settings > Privacy & Security > *Open Anyway* (once).
+  This only holds while the bundle's seal validates. PyInstaller ad-hoc signs the `.app`, and `build.py`
+  then writes `THIRD-PARTY-NOTICES.txt` into `Contents/Resources`, which breaks that seal; `seal_macos`
+  therefore signs the bundle again afterwards — ad-hoc when there is no identity — and verifies it, which
+  fails the build if anything is unsealed. Without that, a quarantined app is refused with "LunarAtlas is
+  damaged and can't be opened" and *Open Anyway* never appears (1.0.0 shipped this way; C-28).
   With an Apple Developer ID, set `MACOS_SIGN_IDENTITY` (and `MACOS_NOTARY_PROFILE` from
   `xcrun notarytool store-credentials`) before `build.py` to sign and notarise; then there is no warning.
 - **Windows:** SmartScreen shows "Windows protected your PC" → *More info* > *Run anyway*. An Authenticode

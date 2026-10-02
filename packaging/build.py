@@ -60,11 +60,22 @@ def signables(app):
     return sorted(found, key=lambda p: (-p.count(os.sep), p))
 
 
-def sign_macos(app, ident):
-    for path in signables(app):
-        run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', ident, path)
-    run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', ident, app)
-    run('codesign', '--verify', '--strict', '--verbose=2', app)
+def seal_macos(app, ident):
+    """Seal the .app, always — with a Developer ID when there is one, else ad-hoc.
+
+    PyInstaller ad-hoc signs the bundle as it builds it, and writing THIRD-PARTY-NOTICES.txt into
+    Contents/Resources afterwards adds a file the seal does not cover, which invalidates it. macOS refuses a
+    quarantined app whose seal does not validate with "LunarAtlas is damaged and can't be opened", and no
+    "Open Anyway" gets past that — unlike the ordinary unidentified-developer warning an ad-hoc signed app
+    gets, which the user can allow once. So the bundle is sealed again here, after everything is in place.
+    `--timestamp` and `--options runtime` need a real identity and are left off the ad-hoc path."""
+    if ident:
+        for path in signables(app):
+            run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', ident, path)
+        run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', ident, app)
+    else:
+        run('codesign', '--force', '--sign', '-', app)
+    run('codesign', '--verify', '--strict', '--verbose=2', app)     # fails the build if anything is unsealed
 
 
 def main():
@@ -94,9 +105,8 @@ def main():
 
     if sys.platform == 'darwin':
         app = os.path.join(DIST, 'LunarAtlas.app')
-        ident = os.environ.get('MACOS_SIGN_IDENTITY')     # "Developer ID Application: …" in the keychain; else unsigned
-        if ident:
-            sign_macos(app, ident)
+        ident = os.environ.get('MACOS_SIGN_IDENTITY')     # "Developer ID Application: …" in the keychain; else ad-hoc
+        seal_macos(app, ident)                            # always: the notices file above broke PyInstaller's seal
         out = f'{base}-macos-{arch}.dmg'
         if os.path.exists(out):
             os.remove(out)
