@@ -155,7 +155,7 @@ function choose(f) {
   show('#whenfrom', false);
   if (!STAMP.test(f.name)) prefillTime(f);
   show('#pick', false); show('#details'); show('#work', false); show('#recentbox', false);
-  fillSetups(); loadEquipment().then(() => { if (file === f) fillSetups($('#setup').value); });
+  fillSetups(); loadEquipment().then(() => { if (file === f) fillSetups(); });   // the last setup, once it is known
   $('#go').focus();
 }
 

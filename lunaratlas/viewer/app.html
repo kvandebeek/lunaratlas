@@ -119,6 +119,15 @@ ul.recent .sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 1
 footer { margin-top: auto; padding-top: 22px; display: flex; justify-content: space-between; gap: 16px; color: var(--text-3); font-size: 13px; align-items: center; }
 footer .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 footer > .linkbtn { flex: none; }
+footer .tools { flex: none; display: flex; gap: 6px; }
+.tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 64px; padding: 6px 8px; border: 0;
+  border-radius: 8px; background: none; color: var(--text-2); font: inherit; font-size: 12.5px; text-decoration: none;
+  cursor: pointer; transition: background .12s, color .12s; }
+.tool svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round;
+  stroke-linejoin: round; }
+.tool:hover { background: rgba(255, 255, 255, .06); color: var(--text); }
+.tool:active { background: rgba(255, 255, 255, .03); }
+.tool:focus-visible { outline: none; box-shadow: var(--focus); }
 
 /* ---- equipment: "Taken with" and the short form */
 select.setup, .eq input { font: inherit; background: var(--bg-0); color: var(--text); border: 1px solid var(--line-strong);
@@ -254,8 +263,10 @@ dialog#eqform::backdrop { background: var(--scrim); }
 
   <footer>
     <span class="path">Photos and exports are kept in <button class="linkbtn" id="folder" title="Show in the file manager"></button></span>
-    <a class="linkbtn" href="/settings" id="settings">Settings</a>
-    <button class="linkbtn" id="quit">Quit LunarAtlas</button>
+    <nav class="tools">
+      <a class="tool" href="/settings" id="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</a>
+      <button class="tool" id="quit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/></svg>Quit LunarAtlas</button>
+    </nav>
   </footer>
 </main>
 <dialog id="eqform" class="eq" aria-labelledby="eqtitle">

@@ -24,6 +24,10 @@ from atlas_paths import DATA, cv_imread, cv_imwrite, file_lock, publish, temp_be
 R_MOON = 1737.4           # km
 DIST = 221.0              # Earth-Moon distance in lunar radii (perspective; 205-234 over the orbit)
 PPD = 64                  # reference map pixels per degree
+PARTIAL_DISK = 0.5          # less of the disk than this in the frame: partial_pose (with a capture time), not coarse_pose
+PARTIAL_SPAN = 20.0         # a limb arc of at least this many degrees is worth trying as a partial limb
+
+
 class NoUsableLimb(Exception):
     """No usable sunlit limb in the image, or too little terrain evidence to trust a full-disk fit: the three
     recoverable conditions geometry() falls back from to a close-up search (bugs-overview BUG-02). Deliberately
@@ -393,9 +397,11 @@ def _circle3(p):
     return cx, cy, np.hypot(x1 - cx, y1 - cy)
 
 
-def fit_limb(gray, tol=1.5):
+def fit_limb(gray, tol=1.5, arc=False):
     """Circle through the sunlit limb. RANSAC: many contour points ON the circle and almost none
-    OUTSIDE it (the terminator always lies inside the true limb, so it cannot win)."""
+    OUTSIDE it (the terminator always lies inside the true limb, so it cannot win).
+    Returns (cx, cy, R, share of the contour on the circle); with arc, also the angle in degrees the points on the
+    circle span (a frame with only a stretch of limb has a small share but still a long, clean arc)."""
     g = cv2.GaussianBlur(gray, (0, 0), 1.5)
     lo, top = np.percentile(g, [2, 99.5])
     if not top > lo + 1e-3 * max(abs(top), 1.0):
@@ -437,7 +443,21 @@ def fit_limb(gray, tol=1.5):
         cx, cy = sol[0] / 2, sol[1] / 2
         R = math.sqrt(sol[2] + cx * cx + cy * cy)
     d = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy) - R
-    return cx, cy, R, float((np.abs(d) < 2 * tol).mean())
+    share = float((np.abs(d) < 2 * tol).mean())
+    if not arc:
+        return cx, cy, R, share
+    on = pts[np.abs(d) < 2 * tol]
+    a = np.sort(np.degrees(np.arctan2(on[:, 1] - cy, on[:, 0] - cx))) if len(on) else np.zeros(0)
+    span = 360.0 - float(np.max(np.diff(np.concatenate([a, a[:1] + 360])))) if len(a) > 1 else 0.0
+    return cx, cy, R, share, span
+
+
+def disk_in_frame(cx, cy, R, w, h):
+    """The share of the disk (centre cx, cy, radius R in px) that lies inside a w × h frame."""
+    s = min(1.0, 400.0 / max(w, h))
+    yy, xx = np.mgrid[0:max(1, round(h * s)), 0:max(1, round(w * s))]
+    inside = np.hypot((xx + 0.5) / s - cx, (yy + 0.5) / s - cy) < R
+    return float(inside.sum() / (s * s) / (math.pi * R * R))
 
 
 # ---------------------------------------------------------------- matching
@@ -506,6 +526,48 @@ def coarse_pose(img_small, disk_mask, ref, cx, cy, R, verify=None, n_peaks=10):
         o['verified'] = verify(o) if verify else None
         tried.append(o)
         if verify is None or o['verified'] >= 40:
+            break
+    o = max(tried, key=lambda c: (c['verified'] or 0, c['score']))
+    o['other_mirror'] = max(grid[not o['mirror']])
+    o['tried'] = len(tried)
+    return o
+
+
+def partial_pose(img, cx, cy, R, lat0, lon0, render, verify, n_verify=6):
+    """The pose of a frame that holds only part of the disk (a stretch of limb and the terrain inside it), with the
+    capture time known: the libration (lat0, lon0) and the Sun come from the ephemeris and the circle gives the scale,
+    so only the turn and the mirroring are unknown. Every turn (3° steps, both mirrorings) is scored by how well the
+    lit relief (render(geo, w, h) -> (image, ok)), smoothed, matches the image over the whole disk in the frame: the
+    lit shape, limb, terminator and long shadows, which the albedo map coarse_pose uses does not have near the poles.
+    The best turns, refined to 1°, are verified by terrain matching (verify(pose) -> matches) in score order; the
+    first with a clear result wins, else the one with the most matches. Returns a dict as coarse_pose does."""
+    h, w = img.shape
+    im = np.clip(img / max(float(np.percentile(img, 99.5)), 1e-6), 0, 1)
+    sig = max(w, h) / 100
+
+    def blur(x):
+        return cv2.GaussianBlur(x.astype(np.float32), (0, 0), sig)
+    bi = blur(im)
+
+    def score(th, mirror):
+        A, t = similarity(cx, cy, R, th, mirror)
+        rr, ok = render(Geometry(lat0, lon0, A, t), w, h)
+        if ok.sum() < 0.02 * w * h:
+            return -1.0
+        rn = np.clip(rr / max(float(np.percentile(rr[ok], 99.5)), 1e-6), 0, 1)
+        return _ncc(bi[ok], blur(rn)[ok])
+
+    angles = range(0, 360, 3)
+    grid = {mi: [score(th, mi) for th in angles] for mi in (False, True)}
+    peaks = sorted(((s[i], angles[i], mi) for mi, s in grid.items() for i in range(len(s))
+                    if s[i] >= s[i - 1] and s[i] >= s[(i + 1) % len(s)]), reverse=True)
+    tried = []
+    for sc, th, mi in peaks[:n_verify]:
+        sc, th = max([(sc, th)] + [(score(th + d, mi), th + d) for d in (-2, -1, 1, 2)])
+        o = dict(score=sc, theta=th % 360, mirror=mi, lat0=lat0, lon0=lon0)
+        o['verified'] = verify(o)
+        tried.append(o)
+        if o['verified'] >= 40:
             break
     o = max(tried, key=lambda c: (c['verified'] or 0, c['score']))
     o['other_mirror'] = max(grid[not o['mirror']])
@@ -665,13 +727,14 @@ def locate(path, log=print, when=None):
     the terrain is then matched against LOLA relief lit by the real Sun (times the albedo), which also covers the
     polar regions beyond the albedo map's ±60° and the terminator shadows of crescents."""
     t0 = time.perf_counter()
-    reliefs, sun_fixed = {}, None
+    reliefs, sun_fixed, lib = {}, None, None
     try:
         from atlas_closeup import Relief, lola_path, render_shaded
         if when is not None:
             from atlas_ephem import ephemeris
             e = ephemeris(when)
             sun_fixed = (e['sub_sun_lat'], e['sub_sun_lon'])
+            lib = (e['sub_obs_lat'], e['sub_obs_lon'])
         have_relief = bool(lola_path(16, log))
     except (ImportError, OSError, SystemExit) as ex:            # offline: the albedo map alone, as before
         if not isinstance(ex, ImportError):
@@ -742,7 +805,17 @@ def locate(path, log=print, when=None):
                 n, o['sun'] = n2, sun
         return n
 
-    o = coarse_pose(g1, disk, ref, c1x, c1y, R1, verify=verify)
+    seen = disk_in_frame(cx, cy, R, g0.shape[1], g0.shape[0])
+    if seen < PARTIAL_DISK and sun_fixed and have_relief:
+        # a stretch of limb and the terrain inside it: the circle gives the scale, the capture time the libration and
+        # the Sun, so the turn is found against the lit relief (coarse_pose's albedo map ends at ±60°, and its
+        # libration search needs more of the disk)
+        log(f'only {seen:.0%} of the disk is in the frame: turning the lit relief to fit')
+        gp, (spx, spy) = resize(g0, 512.0 / max(g0.shape))
+        o = partial_pose(gp, (cx + 0.5) * spx - 0.5, (cy + 0.5) * spy - 0.5, R * math.sqrt(spx * spy), *lib,
+                         lambda g, w, h: shaded(g, w, h, sun_fixed, 16), verify)
+    else:
+        o = coarse_pose(g1, disk, ref, c1x, c1y, R1, verify=verify)
     log(f'orientation: north {o["theta"]:.1f}°, {"mirrored" if o["mirror"] else "not mirrored"} '
         f'(match {o["score"]:.2f} vs {o["other_mirror"]:.2f} mirrored the other way; '
         f'{o["verified"]} terrain matches, pose {o["tried"]} of the candidates)')

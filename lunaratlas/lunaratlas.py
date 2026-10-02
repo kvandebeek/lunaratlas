@@ -30,7 +30,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tool_settings as ts  # noqa: E402
-from atlas_geo import (NoUsableLimb, fit_limb, image_signature, load_geo, locate, north_up, resize,   # noqa: E402
+from atlas_geo import (PARTIAL_SPAN, NoUsableLimb, fit_limb, image_signature, load_geo, locate, north_up, resize,   # noqa: E402
                        resolve_sidecar, save_geo, sidecar_path, unresize, write_atomic, write_json_atomic, R_MOON)
 from atlas_paths import IMAGE_EXT, cv_imread, cv_imwrite, is_export_name  # noqa: E402
 from atlas_names import load_features                                    # noqa: E402
@@ -58,18 +58,23 @@ def quality_gate(image):
         raw = raw[..., :3]
     g = luminance(raw)
     H, W = g.shape
-    limb = None
+    limb, partial = None, False
     try:
         g0, (sx, sy) = resize(g, 1024.0 / max(W, H))
-        cx, cy, R, share = fit_limb(g0)
+        cx, cy, R, share, span = fit_limb(g0, arc=True)
         if share >= 0.25:
             (cx0, cy0), R0 = unresize((cx, cy), sx, sy), R / math.sqrt(sx * sy)
             limb = (float(cx0), float(cy0), float(R0))
+        else:
+            # a stretch of limb along a ragged terminator: too little of the outline for a full disk, but a long clean
+            # arc that locate() can work from when the capture time is known (see atlas_geo.partial_pose)
+            partial = share >= 0.1 and span >= PARTIAL_SPAN
     except NoUsableLimb:          # absent/unreliable limb is expected here: the gate just reports it, not fatal
         pass
     del g
     q = measure(raw, limb)
     q['has_limb'] = limb is not None
+    q['partial_limb'] = partial
     ok, reasons, line = verdict(q)
     return ok, reasons, line, q
 
@@ -98,10 +103,12 @@ def geometry(image, relocate=False, force=False, gate=True, when=None, setup=Non
             raise SystemExit('not annotated: ' + '; '.join(reasons) + '. Use --force to annotate anyway.')
         log('annotating anyway (--force)' if force else 'quality gate: not applied for this command')
     log(f'locating {os.path.basename(image)}')
+    from atlas_ephem import capture_time as _when
     try:
-        if not qm.get('has_limb'):
+        if not qm.get('has_limb') and not (qm.get('partial_limb') and (when or _when(image))):
             raise NoUsableLimb('no limb in view')
-        from atlas_ephem import capture_time as _when
+        if not qm.get('has_limb'):
+            log('a stretch of limb in view: positioning from it')
         geo, q = locate(image, log, when=when or _when(image))
         if when:
             q['capture_utc'] = when.strftime('%Y-%m-%d %H:%M:%S')

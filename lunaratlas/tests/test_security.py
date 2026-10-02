@@ -617,3 +617,54 @@ class ReleaseInputs(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AnAddressWithoutTheKey(unittest.TestCase):
+    """http://localhost:PORT/app typed or bookmarked (or a tab from an earlier start): no key, so no way in; a page that
+    says so, with a button that has LunarAtlas open its own tab with the key, never showing the key itself."""
+
+    def setUp(self):
+        from atlas_app import App
+        from atlas_view import start_server
+        self.tmp = tempfile.mkdtemp(prefix='lunaratlas_nokey_')
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.app = App(self.tmp, S.quiet)
+        self.srv = start_server(S.free_port(), S.quiet, app=self.app)
+        self.app.server = self.srv
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.srv.server_close)
+        self.addCleanup(self.srv.shutdown)
+        self.url = f'http://localhost:{self.srv.server_port}'
+
+    def test_a_page_opened_by_its_address_says_why_and_shows_no_key(self):
+        for path in ('/app', '/', '/settings'):
+            with self.subTest(path=path):
+                code, _, body = raw(self.url, 'GET', path, {'Accept': 'text/html', 'Sec-Fetch-Dest': 'document',
+                                                            'Sec-Fetch-Site': 'none'})
+                self.assertEqual(code, 403)
+                self.assertIn(b'needs LunarAtlas', body)
+                self.assertIn(b'action="/app/reopen"', body)
+                self.assertNotIn(self.srv.token.encode(), body)
+        code, _, body = raw(self.url, 'GET', '/app/status', {'Accept': 'text/html'})
+        self.assertEqual(code, 403)
+        self.assertNotIn(b'needs LunarAtlas', body, 'data is refused plainly')
+        code, _, body = raw(self.url, 'GET', '/app', {'Accept': 'text/html', 'Sec-Fetch-Site': 'cross-site'})
+        self.assertEqual(code, 403)
+        self.assertNotIn(b'needs LunarAtlas', body, 'another site gets nothing to show')
+
+    def test_the_button_opens_a_tab_with_the_key_and_only_now_and_then(self):
+        with mock.patch('atlas_view.webbrowser.open') as opened:
+            for _ in range(3):
+                code, _, body = raw(self.url, 'POST', '/app/reopen', {'Origin': self.url,
+                                                                      'Content-Type': 'application/x-www-form-urlencoded'}, b'')
+                self.assertEqual(code, 200)
+                self.assertNotIn(self.srv.token.encode(), body)
+            for _ in range(50):
+                if opened.called:
+                    break
+                threading.Event().wait(0.05)
+        self.assertEqual(opened.call_count, 1, 'pressed three times, one tab')
+        with open(urlparse(opened.call_args[0][0]).path) as fh:
+            self.assertIn(f'/app?t={self.srv.token}', fh.read(), 'the hand-off page carries the key, not the URL')
+        code, _, _ = raw(self.url, 'POST', '/app/reopen', {'Origin': 'http://evil.example'}, b'')
+        self.assertEqual(code, 403)

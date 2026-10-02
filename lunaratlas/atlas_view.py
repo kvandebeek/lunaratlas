@@ -687,6 +687,7 @@ class Server(ThreadingHTTPServer):
     app: Any = None
     log: Any = print
     token = ''                                  # this run's secret: every request but the ping must show it
+    reopened = -1e9                             # when the no-key page last asked for a tab with the key
     request_queue_size = 128                    # the default 5 makes Windows refuse a burst of connections (16 at once did)
 
     @property
@@ -825,6 +826,54 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    NO_KEY = ('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, '
+              'initial-scale=1"><title>LunarAtlas</title><style>body{{margin:0;min-height:100vh;display:grid;'
+              'place-items:center;background:#0A0F25;color:#FCF8EE;font:16px/1.55 "IBM Plex Sans",system-ui,'
+              '-apple-system,"Segoe UI",sans-serif}}main{{max-width:520px;margin:24px 16px;padding:28px;background:#111934;'
+              'border:1px solid rgba(255,255,255,.12);border-radius:14px}}h1{{margin:0 0 10px;font-size:22px;'
+              'font-weight:600}}p{{margin:0 0 14px;color:#B7BFD8}}button{{height:44px;padding:0 20px;border:0;'
+              'border-radius:10px;background:#F5A742;color:#1A1206;font-weight:600;font-size:15px;font-family:inherit;'
+              'cursor:pointer}}button:hover{{background:#F8B963}}button:focus-visible{{outline:2px solid #F5A742;'
+              'outline-offset:3px}}small{{display:block;margin-top:14px;color:#97A1C2;font-size:13px}}</style>'
+              '<main>{body}</main></html>')
+
+    def no_key(self, p):
+        """A request without this run's key. A page someone opened by its address (typed, bookmarked, or a tab left
+        from an earlier run, whose key is gone) gets a page that says so, with a button that asks LunarAtlas to open
+        its own tab with the key; anything else, a plain 403."""
+        page = p in ('/', '/index.html', '/app', '/settings') and (
+            self.headers.get('Sec-Fetch-Dest') == 'document' or 'text/html' in (self.headers.get('Accept') or ''))
+        if not page:
+            return self.send_error(403)
+        body = ('<h1>This address needs LunarAtlas’s key</h1><p>LunarAtlas only answers the window or tab it opened itself: '
+                'every start has a new key, so a typed or bookmarked address, or a tab from an earlier start, cannot get '
+                'in. That keeps other programs on this computer out.</p><form method="post" action="/app/reopen">'
+                '<button>Open LunarAtlas</button></form><small>Or start LunarAtlas again from its icon.</small>')
+        self.reply(self.NO_KEY.format(body=body).encode(), 'text/html; charset=utf-8', 403)
+
+    def reopen(self):
+        """The no-key page's button: LunarAtlas opens its own window or tab with the key (at most every few seconds).
+        The page that asked never sees the key, so another program pressing it only gets a tab opened on the user's
+        screen."""
+        if self.headers.get('Content-Length'):
+            try:
+                self.rfile.read(self.length(4096))
+            except ValueError:
+                return self.send_error(400)
+        now, app = time.monotonic(), self.srv.app
+        if now - self.srv.reopened > 5:
+            self.srv.reopened = now
+            if app is not None and getattr(app, 'window', None) is not None:
+                app.window.restore()
+                app.window.show()
+            else:
+                path = '/app' if app is not None else '/'
+                threading.Thread(target=webbrowser.open, args=(handoff_url(self.srv.url(path, secret=True)),),
+                                 daemon=True).start()
+        body = ('<h1>Opening LunarAtlas…</h1><p>A new tab (or the LunarAtlas window) opens with the key. You can close '
+                'this one.</p>')
+        self.reply(self.NO_KEY.format(body=body).encode(), 'text/html; charset=utf-8')
+
     def page(self):
         with open(os.path.join(PAGE, 'index.html'), 'rb') as fh:
             return fh.read()
@@ -839,8 +888,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(b'lunaratlas:' + self.srv.prove((parse_qs(query).get('nonce') or [''])[0]).encode(), 'text/plain')
         if self.enter(p, query):      # the one-time ?t= link: see same_site()'s docstring for why this skips it
             return
-        if not self.same_site() or not self.authed():
+        if not self.same_site():
             return self.send_error(403)
+        if not self.authed():
+            return self.no_key(p)
         app, s = self.srv.app, self.srv.session
         if app is not None and app.get(self, p):
             return
@@ -936,9 +987,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        p = self.path.split('?')[0]
+        if p == '/app/reopen' and self.local():           # the no-key page's button: no key needed, none shown
+            return self.reopen()
         if not self.local() or not self.authed():
             return self.send_error(403)
-        p = self.path.split('?')[0]
         app, s = self.srv.app, self.srv.session
         if app is not None and app.post(self, p):
             return
