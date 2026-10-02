@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/kvandebeek/lunaratlas/releases/latest"><img src="https://img.shields.io/github/v/release/kvandebeek/lunaratlas?label=Download&color=orange" alt="Download the latest release"></a>
+  <a href="https://github.com/kvandebeek/lunaratlas/wiki"><img src="https://img.shields.io/badge/manual-wiki-blue" alt="The manual, in the wiki"></a>
 </p>
 
 It works on full disks, any phase, mosaics and close-ups without a limb. It finds the image's position,
@@ -22,8 +23,8 @@ labelled images at 1:1 or smaller (never upscaled). A browser viewer lets you se
 draw, and move or restyle the labels; your edits are kept and reused by the command-line export.
 
 <p align="center">
-  <img src="design/screenshots/14-viewer-zoomed-labels.png" width="49%" alt="LunarAtlas viewer, zoomed in near Tycho with crater names and a layers panel">
-  <img src="design/screenshots/20-viewer-quality-chip.png" width="49%" alt="LunarAtlas viewer on a partial-phase photo, names following the curved limb and terminator">
+  <img src="Wiki/images/viewer.jpg" width="49%" alt="The LunarAtlas viewer on a full disk, with crater and mare names and a layers panel">
+  <img src="Wiki/images/export-whole-disk.jpg" width="49%" alt="An exported labelled image: names, lat/lon grid, scale bar and info block drawn into the photo">
 </p>
 
 ---
@@ -40,6 +41,10 @@ and start it — drop a photo of the Moon on its window and the names appear. Ex
 The first photo downloads about 145 MB of Moon maps (the first close-up about 530 MB more), once. From a
 checkout, `python3 lunaratlas/lunaratlas.py app` does the same. Building the app yourself: [`packaging/`](packaging/README.md).
 
+**[The manual is in the wiki](https://github.com/kvandebeek/lunaratlas/wiki)**: installing, your first
+photo, the viewer, exporting, close-ups and equipment, the quality check, troubleshooting and the honest
+limits. Its source lives in [`Wiki/`](Wiki/).
+
 ---
 
 ## Command line
@@ -52,15 +57,18 @@ python3 lunaratlas/lunaratlas.py export mosaic_finished.tif --around Copernicus 
 
 Measured on a 200 Mpx lunar mosaic: 621 terrain matches at 1.56 px RMS (0.43 km).
 
-See [`lunaratlas/README.md`](lunaratlas/README.md) for how the positioning works, the quality gate, the
-close-up search, the viewer and every export option.
+Every command and option: **[The command line](https://github.com/kvandebeek/lunaratlas/wiki/The-command-line)**
+in the wiki. How the positioning actually works, and how accurate it is:
+**[How it works](https://github.com/kvandebeek/lunaratlas/wiki/How-it-works)**.
+[`lunaratlas/README.md`](lunaratlas/README.md) is the developer's map of the modules.
 
 ---
 
 ## Requirements
 
 macOS, Linux or Windows. Python 3.14 with numpy, OpenCV and Pillow (`python3 -m pip install -r requirements.txt`). Developed and measured on macOS
-(Apple silicon); Linux and Windows should work but are untested, so do tell me if they don't.
+(Apple silicon); Linux and Windows are built and tested on every change but have had far less real use,
+so do tell me if something is wrong there.
 
 Reference data (IAU gazetteer, LROC WAC
 albedo, LOLA elevation, fonts) is downloaded once on first use into `lunaratlas/data/`.
