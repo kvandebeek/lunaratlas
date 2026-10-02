@@ -253,10 +253,13 @@
     // by platform, so the names fall on different spots)
     const at = (t) => [600 + 300 * t, 520 + 20 * t];
     const free = [0.5, 0.4, 0.6, 0.3, 0.7, 0.35, 0.65, 0.45, 0.55, 0.25, 0.75].find((t) => !T.hitFeature(...at(t)));
-    const [mx, my] = at(free ?? 0.5), ax = m.a.x;
-    await drag(mx, my, mx + 30, my);
-    ok(Math.abs((m.a.x - ax) * T.view.s - 30) < 3,
-       `measurement dragged along (moved ${((m.a.x - ax) * T.view.s).toFixed(1)} of 30 px, grabbed at ${mx.toFixed(0)},${my.toFixed(0)}, ${free === undefined ? 'no free spot on the line' : 'a free spot'})`);
+    const [mx, my] = at(free ?? 0.5), ay = m.a.y;
+    // upwards, towards the middle of the disk: a measurement is only moved while both its ends stay on the Moon, and a
+    // sideways drag stopped two thirds of the way on Windows (20.0 of 30 px), where the window is a little smaller
+    await drag(mx, my, mx, my - 30);
+    const dy = (m.a.y - ay) * T.view.s;
+    ok(Math.abs(dy + 30) < 3,
+       `measurement dragged along (moved ${dy.toFixed(1)} of -30 px, grabbed at ${mx.toFixed(0)},${my.toFixed(0)}, ${free === undefined ? 'no free spot on the line' : 'a free spot'})`);
     key('z', { metaKey: true }); await wait(50); key('z', { metaKey: true }); await wait(50);
     ok(T.edits.shapes.length === n0, `two undos remove drag and measurement (${T.edits.shapes.length})`);
     await wait(500);

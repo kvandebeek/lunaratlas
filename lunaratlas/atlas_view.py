@@ -687,6 +687,7 @@ class Server(ThreadingHTTPServer):
     app: Any = None
     log: Any = print
     token = ''                                  # this run's secret: every request but the ping must show it
+    request_queue_size = 128                    # the default 5 makes Windows refuse a burst of connections (16 at once did)
 
     @property
     def cookie_name(self):
