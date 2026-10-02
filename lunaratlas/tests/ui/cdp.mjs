@@ -3,7 +3,8 @@
 // click: a button under a panel, a zero-size control or a disabled one fails instead of "working".
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename, dirname } from 'node:path';
+import { homedir } from 'node:os';
 
 // a browser we may not signal (the Chromium snap on Ubuntu: the pid we hold is the snap wrapper's, and EACCES comes
 // back, as an 'error' event or a throw) is not a failed journey; the sweep by profile and the session end still run
@@ -50,7 +51,11 @@ export class Browser {
   }
 
   static async _launchOnce(chrome, dir, { width = 1400, height = 900 } = {}) {
-    const profile = join(dir, 'chrome-profile');
+    // the Chromium snap has a private /tmp, so a DevToolsActivePort it writes there is not where we look; a visible
+    // directory under $HOME is the one place both of us see. Chrome elsewhere keeps its profile beside the test's files.
+    const snap = process.platform === 'linux' && /^\/snap\//.test(chrome);
+    const profile = snap ? join(homedir(), 'lunaratlas-chrome-profiles', `${basename(dirname(dir))}-${basename(dir)}`)
+                         : join(dir, 'chrome-profile');
     rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     mkdirSync(profile, { recursive: true });
     // without the three "background" switches a headless window can count as hidden (macOS occlusion) and its
@@ -86,6 +91,7 @@ export class Browser {
     }
     if (!page) { stop(proc); throw new Error('Chrome did not start'); }   // DevTools came up with no page tab
     const b = new Browser(proc, page.webSocketDebuggerUrl, width, height, profile);
+    b.relocated = snap;
     await b.open();
     return b;
   }
@@ -153,6 +159,7 @@ export class Browser {
       if (process.platform === 'win32') spawnSync('taskkill', ['/F', '/T', '/PID', String(this.proc.pid)]);
       else spawnSync('pkill', ['-9', '-f', this.profile]);
     } catch { /* best effort */ }
+    if (this.relocated) rmSync(this.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });   // outside the test's own temp dir
   }
 
   // ---------------------------------------------------------------- page
