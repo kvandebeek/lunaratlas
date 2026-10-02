@@ -1017,6 +1017,10 @@ const J = {
     await ok(true, '"Find names" on the unreadable photo runs and reports the error');
     await b.click('#again');
     await b.until(`document.querySelectorAll('#recent li').length === 2`, 5000, 'the list');
+    // reset() rebuilt the list with fresh <img>s, the unreadable photo's included: until its thumbnail request
+    // fails and onerror drops it, li:has(img) matches that row too (and it is the newer file, so listed first).
+    // Clicking it runs a locate that fails instead of opening a viewer. Same wait as after #otherImage above.
+    await b.until(`[...document.querySelectorAll('#recent img')].length === 1`, 5000, 'the broken thumbnail dropped again');
     await b.click('#recent li:has(img) .meta');
     await b.until(ready, 30000, 'the viewer from the list row');
     await ok(true, 'a click on the row itself opens the photo');
