@@ -664,7 +664,7 @@ class AnAddressWithoutTheKey(unittest.TestCase):
                     break
                 threading.Event().wait(0.05)
         self.assertEqual(opened.call_count, 1, 'pressed three times, one tab')
-        with open(urlparse(opened.call_args[0][0]).path) as fh:
+        with open(opened.call_args[0][0].removeprefix('file://')) as fh:      # file:///x/open.html, file://C:\\x\\open.html
             self.assertIn(f'/app?t={self.srv.token}', fh.read(), 'the hand-off page carries the key, not the URL')
         code, _, _ = raw(self.url, 'POST', '/app/reopen', {'Origin': 'http://evil.example'}, b'')
         self.assertEqual(code, 403)
