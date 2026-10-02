@@ -248,9 +248,14 @@
     ok(m && m.kind === 'measure' && m.b, `measurement saved (${T.edits.shapes.length} shapes)`);
     key('v'); await wait(50);
     // drag the measurement's line: it moves
-    const mx = (600 + 900) / 2, my = (520 + 540) / 2, ax = m.a.x;
+    // grab the line where no name or crater sits on it: a label there takes the drag instead (the fonts differ
+    // by platform, so the names fall on different spots)
+    const at = (t) => [600 + 300 * t, 520 + 20 * t];
+    const free = [0.5, 0.4, 0.6, 0.3, 0.7, 0.35, 0.65, 0.45, 0.55, 0.25, 0.75].find((t) => !T.hitFeature(...at(t)));
+    const [mx, my] = at(free ?? 0.5), ax = m.a.x;
     await drag(mx, my, mx + 30, my);
-    ok(Math.abs((m.a.x - ax) * T.view.s - 30) < 3, 'measurement dragged along');
+    ok(Math.abs((m.a.x - ax) * T.view.s - 30) < 3,
+       `measurement dragged along (moved ${((m.a.x - ax) * T.view.s).toFixed(1)} of 30 px, grabbed at ${mx.toFixed(0)},${my.toFixed(0)}, ${free === undefined ? 'no free spot on the line' : 'a free spot'})`);
     key('z', { metaKey: true }); await wait(50); key('z', { metaKey: true }); await wait(50);
     ok(T.edits.shapes.length === n0, `two undos remove drag and measurement (${T.edits.shapes.length})`);
     await wait(500);
