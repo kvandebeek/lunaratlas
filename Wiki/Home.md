@@ -1,4 +1,4 @@
-# LunarAtlas 1.0.0
+# LunarAtlas
 
 LunarAtlas puts the official (IAU) names of craters, seas and mountains on **your own** photo of the
 Moon. Think of LROC QuickMap, but with your picture instead of a spacecraft mosaic.
@@ -41,7 +41,7 @@ It handles full disks, any phase, mosaics, and close-ups that do not show the ed
 | **[Settings reference](Settings-reference)** | Every setting, where it lives and what it does. |
 | **[Files and folders](Files-and-folders)** | Where your photos, exports, downloads and caches are kept. |
 | **[Credits and licences](Credits-and-licences)** | The data and fonts LunarAtlas uses, and who made them. |
-| **[Release notes](Release-notes)** | What is in 1.0.0. |
+| **[Release notes](Release-notes)** | What is in each release. |
 
 ---
 

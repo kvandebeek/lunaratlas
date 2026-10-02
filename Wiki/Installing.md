@@ -2,14 +2,14 @@
 
 LunarAtlas comes as an ordinary app. You do not need Python, a terminal, or any other software.
 
-Get it from the **[releases page](https://github.com/kvandebeek/lunaratlas/releases)**.
+Get it from the **[releases page](https://github.com/kvandebeek/lunaratlas/releases)**. `VERSION` below is whatever the latest release is — 1.0.1 at the time of writing.
 
 | Your computer | Download | What to do |
 |---|---|---|
-| **macOS**, Apple silicon | `LunarAtlas-1.0.0-macos-arm64.dmg` | Open it, drag **LunarAtlas** to Applications. |
-| **macOS**, Intel | `LunarAtlas-1.0.0-macos-x64.dmg` | The same. |
-| **Windows** | `LunarAtlas-1.0.0-windows-setup.exe` | Run it. It installs for you alone and needs no administrator rights. |
-| **Linux**, 64-bit | `LunarAtlas-1.0.0-linux-x64.tar.gz` | Unpack it, then run `./LunarAtlas`, or `./install.sh` to get a menu entry. |
+| **macOS**, Apple silicon | `LunarAtlas-VERSION-macos-arm64.dmg` | Open it, drag **LunarAtlas** to Applications. |
+| **macOS**, Intel | `LunarAtlas-VERSION-macos-x64.dmg` | The same. |
+| **Windows** | `LunarAtlas-VERSION-windows-setup.exe` | Run it. It installs for you alone and needs no administrator rights. |
+| **Linux**, 64-bit | `LunarAtlas-VERSION-linux-x64.tar.gz` | Unpack it, then run `./LunarAtlas`, or `./install.sh` to get a menu entry. |
 
 Not sure which Mac you have? Apple menu → **About This Mac**. "Apple M1" or later means `arm64`;
 "Intel" means `x64`.
@@ -43,7 +43,7 @@ sha256sum --ignore-missing -c SHA256SUMS.txt          # Linux
 ```
 
 ```powershell
-Get-FileHash LunarAtlas-1.0.0-windows-setup.exe       # Windows; compare with the line in SHA256SUMS.txt
+Get-FileHash LunarAtlas-VERSION-windows-setup.exe     # Windows; compare with the line in SHA256SUMS.txt
 ```
 
 You want to see `OK` for your file. `--ignore-missing` matters: the file lists all four downloads, and

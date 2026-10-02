@@ -1,4 +1,4 @@
-**[LunarAtlas 1.0.0](Home)**
+**[LunarAtlas](Home)**
 
 **Using it**
 - [Installing](Installing)

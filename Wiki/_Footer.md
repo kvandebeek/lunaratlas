@@ -1,2 +1,2 @@
-The manual for **LunarAtlas 1.0.0**. Something wrong or missing?
+The manual for **LunarAtlas**, current release. Something wrong or missing?
 [Open an issue](https://github.com/kvandebeek/lunaratlas/issues).

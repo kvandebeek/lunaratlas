@@ -20,7 +20,7 @@ the web UI (Wiki tab → Create the first page → Save).
 ```sh
 git clone https://github.com/kvandebeek/lunaratlas.wiki.git /tmp/lunaratlas.wiki
 rsync -a --delete --exclude .git Wiki/ /tmp/lunaratlas.wiki/
-cd /tmp/lunaratlas.wiki && git add -A && git commit -m "Manual for 1.0.0" && git push
+cd /tmp/lunaratlas.wiki && git add -A && git commit -m "Manual for the current release" && git push
 ```
 
 ## Taking the screenshots again

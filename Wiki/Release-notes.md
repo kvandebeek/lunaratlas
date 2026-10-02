@@ -1,6 +1,29 @@
 # Release notes
 
-## 1.0.0 — Langrenus
+## 1.0.1 — Langrenus
+
+**The current release**, and in practice the first one you can use.
+
+**macOS builds can be opened at all.** 1.0.0's macOS builds shipped with an invalid code signature: the
+build wrote the third-party licence notices into the app bundle *after* it had been sealed, which broke
+the seal. macOS refused those builds outright with *"LunarAtlas is damaged and can't be opened"* — not
+the ordinary unsigned-app warning, and no **Open Anyway** could get past it. The bundle is now sealed
+again once everything is in place, and the build verifies the seal, so this cannot ship unnoticed again.
+
+Windows and Linux were unaffected by that. Alongside it:
+
+- the Windows installer carries its own version and publisher metadata, so it no longer shows up with no
+  publisher at all in its file properties;
+- the build can be Authenticode-signed as soon as a certificate exists, timestamped and verified;
+- the manual gained this wiki, and the release page now explains how to get past the first-start warning
+  on both macOS and Windows.
+
+**1.0.0 has been withdrawn.** Its downloads are gone, because its macOS builds could not be started.
+Everything below describes what 1.0.1 is, since 1.0.0 never really ran.
+
+---
+
+## 1.0.0 — Langrenus (withdrawn)
 
 The first release. LunarAtlas puts IAU feature names on your own photos of the Moon, and it is an app
 now: there is nothing to install besides the app itself, and no terminal is needed at any point.
@@ -48,6 +71,6 @@ Apache License 2.0. Data from USGS, NASA/GSFC and Arizona State University — s
 
 ## About version numbers
 
-Releases are tagged `v1.0.0`. A tag may carry a crater name after the version — `v1.0.0-Langrenus` — and
-it builds version 1.0.0, titled *LunarAtlas 1.0.0 – Langrenus*. The name is decoration; the version is
-what counts.
+Releases are tagged `v1.2.3`. A tag may carry a crater name after the version — `v1.0.1-Langrenus` — and
+it builds version 1.0.1, titled *LunarAtlas 1.0.1 – Langrenus*. The name is decoration; the version is
+what counts, and it is the number that goes into the app, since macOS and Windows want one.
