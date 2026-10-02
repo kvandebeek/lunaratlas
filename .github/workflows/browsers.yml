@@ -31,7 +31,8 @@ jobs:
         shell: bash
     env:
       LUNARATLAS_BROWSER: ${{ matrix.browser }}
-      LUNARATLAS_PERF_FACTOR: '3'          # shared CI runners are slower than a desktop
+      # shared CI runners are slower than a desktop; Windows runners measurably more so for headless Chrome
+      LUNARATLAS_PERF_FACTOR: ${{ matrix.os == 'windows-latest' && '6' || '3' }}
       LUNARATLAS_UI_OUT: ${{ github.workspace }}/ui-screenshots     # a screenshot per failed UI check
       PYTHONUTF8: '1'
     steps:
