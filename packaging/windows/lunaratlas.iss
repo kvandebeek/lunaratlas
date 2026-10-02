@@ -24,6 +24,15 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; the setup .exe's own file properties (right-click > Properties > Details). They do not remove the SmartScreen
+; warning — only an Authenticode signature does — but without them Windows shows the installer with no publisher
+; and no description at all, which is worse.
+VersionInfoVersion={#Version}
+VersionInfoProductName=LunarAtlas
+VersionInfoProductVersion={#Version}
+VersionInfoDescription=LunarAtlas setup
+VersionInfoCompany=Kristof Vandebeek
+VersionInfoCopyright=Copyright 2026 Kristof Vandebeek. Apache License 2.0.
 SetupIconFile=..\icon\windows\LunarAtlas.ico
 UninstallDisplayIcon={app}\LunarAtlas.exe
 LicenseFile=..\..\LICENSE

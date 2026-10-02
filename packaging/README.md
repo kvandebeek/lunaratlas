@@ -77,8 +77,28 @@ Unsigned builds work, but the first start needs the user's permission:
   damaged and can't be opened" and *Open Anyway* never appears (1.0.0 shipped this way; C-28).
   With an Apple Developer ID, set `MACOS_SIGN_IDENTITY` (and `MACOS_NOTARY_PROFILE` from
   `xcrun notarytool store-credentials`) before `build.py` to sign and notarise; then there is no warning.
-- **Windows:** SmartScreen shows "Windows protected your PC" → *More info* > *Run anyway*. An Authenticode
-  code-signing certificate removes it; there is none yet, so the installer is not signed.
+- **Windows:** SmartScreen shows "Windows protected your PC", names the publisher as unknown and advises
+  against running it → *More info* > *Run anyway*. There is no certificate yet, so the installer is not signed.
+
+  The build is ready for one: set `WINDOWS_SIGN_SHA1` (a certificate's thumbprint in the user's store, which
+  is how a hardware token presents itself) or `WINDOWS_SIGN_PFX` with `WINDOWS_SIGN_PASSWORD`, and `build.py`
+  signs both `.exe` files and then the installer, timestamped (`WINDOWS_TIMESTAMP_URL`, DigiCert by default)
+  so the signatures outlive the certificate. It verifies afterwards, so a signature that did not take fails
+  the build. The password is redacted from the build log.
+
+  Nothing in the repository can remove the warning on its own, because it is a statement about who is
+  vouching for the publisher, not about the code:
+
+  | Option | Cost | Warning |
+  |---|---|---|
+  | Unsigned (today) | — | Always |
+  | OV certificate (e.g. Certum's open-source one) | ≈ €100–200/yr, hardware token | Until SmartScreen reputation builds, over downloads and weeks |
+  | [SignPath Foundation](https://signpath.org/apply) | free for qualifying OSS | As OV; they provide certificate and signing infrastructure |
+  | [Azure Trusted Signing](https://azure.microsoft.com/products/trusted-signing) | ≈ $10/month | As OV; CI-friendly, individuals need a verifiable history |
+  | EV certificate | ≈ €300–600/yr, hardware token | None, from the first download |
+
+  Only EV buys an immediately clean first run. Everything else earns it over time, which is why the
+  signature needs to go on *every* release rather than wait for a perfect one.
 
 macOS signing signs every nested binary and bundle inside the app one by one, innermost first, then the app (not
 `codesign --deep`). Every release lists `SHA256SUMS.txt`; check a download with `shasum -a 256 -c SHA256SUMS.txt`.

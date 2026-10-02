@@ -272,6 +272,50 @@ class PackagingSeal(S.TempDir):
         self.assertIn('--verify', calls[-1])
 
 
+class PackagingWindowsSigning(S.TempDir):
+    """packaging/build.py: Authenticode signing is optional, timestamped, and never prints the password.
+
+    Unsigned is a supported outcome (SmartScreen then warns about the publisher), so no certificate must not
+    fail the build; but a certificate that is given must actually be used, and must be timestamped, or the
+    signature stops being trusted the day it expires.
+    """
+
+    def build(self):
+        spec = importlib.util.spec_from_file_location('lunaratlas_build_win', BUILD)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_no_certificate_leaves_the_build_unsigned_without_failing(self):
+        b = self.build()
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(b, 'run') as run:
+            b.sign_windows(['LunarAtlas.exe'])
+        run.assert_not_called()
+
+    def test_a_certificate_signs_every_file_and_timestamps_it(self):
+        b = self.build()
+        with mock.patch.dict(os.environ, {'WINDOWS_SIGN_SHA1': 'AABB'}, clear=True), \
+             mock.patch.object(b, 'run') as run, mock.patch.object(b, 'signtool', return_value='signtool.exe'):
+            b.sign_windows(['A.exe', 'B.exe'])
+        calls = [c.args for c in run.call_args_list]
+        self.assertEqual([c[-1] for c in calls[:2]], ['A.exe', 'B.exe'])
+        for c in calls[:2]:
+            self.assertIn('/tr', c)                       # timestamped, or it expires with the certificate
+            self.assertIn('/sha1', c)
+        self.assertEqual(calls[-1][1], 'verify')          # a signature that did not take must fail the build
+
+    def test_the_password_is_never_printed(self):
+        b = self.build()
+        env = {'WINDOWS_SIGN_PFX': 'c.pfx', 'WINDOWS_SIGN_PASSWORD': 'hunter2'}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(b.subprocess, 'run'), mock.patch.object(b, 'signtool', return_value='signtool.exe'), \
+             mock.patch('builtins.print') as printed:
+            b.sign_windows(['A.exe'])
+        shown = ' '.join(str(a) for c in printed.call_args_list for a in c.args)
+        self.assertNotIn('hunter2', shown)                # build logs are public
+        self.assertIn('***', shown)
+
+
 class Startup(S.TempDir):
     """atlas_app.run: an app window when pywebview is there, else the browser; a second start hands over."""
 

@@ -11,6 +11,11 @@ macOS signing and notarisation are optional: MACOS_SIGN_IDENTITY (a Developer ID
 signs the app, and with MACOS_NOTARY_PROFILE (from `xcrun notarytool store-credentials`) the .dmg is notarised too.
 Unsigned, macOS asks the user to allow the app once (System Settings > Privacy & Security > Open Anyway).
 
+Windows signing is optional in the same way: WINDOWS_SIGN_SHA1 (a certificate's thumbprint in the user's store, which
+is how a hardware token presents itself) or WINDOWS_SIGN_PFX with WINDOWS_SIGN_PASSWORD signs the two .exe files and
+the installer, timestamped so the signature outlives the certificate. Unsigned, SmartScreen warns that the publisher
+is unknown and advises against running it; only a certificate removes that, and only an EV one removes it at once.
+
 A build runs on the platform it is for (PyInstaller does not cross-compile); .github/workflows/build-app.yml
 builds all three.
 """
@@ -30,8 +35,12 @@ import notices  # noqa: E402      # path (as the tests do), from any working dir
 DIST, WORK = os.path.join(ROOT, 'dist'), os.path.join(ROOT, 'build')
 
 
+SECRET_ENV = ('WINDOWS_SIGN_PASSWORD',)     # values never to print: a build log is often public
+
+
 def run(*cmd, **kw):
-    print('+', ' '.join(cmd), flush=True)
+    secrets = {os.environ[k] for k in SECRET_ENV if os.environ.get(k)}
+    print('+', ' '.join('***' if c in secrets else c for c in cmd), flush=True)
     subprocess.run(cmd, check=True, **kw)
 
 
@@ -76,6 +85,43 @@ def seal_macos(app, ident):
     else:
         run('codesign', '--force', '--sign', '-', app)
     run('codesign', '--verify', '--strict', '--verbose=2', app)     # fails the build if anything is unsealed
+
+
+def signtool():
+    """signtool.exe: on PATH, else the newest one in the Windows SDK."""
+    found = shutil.which('signtool')
+    if found:
+        return found
+    roots = [os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'), 'Windows Kits', '10', 'bin')]
+    cand = []
+    for root in roots:
+        for dirpath, _dirs, files in os.walk(root) if os.path.isdir(root) else []:
+            if 'signtool.exe' in files and os.path.basename(dirpath) in ('x64', 'x86'):
+                cand.append(os.path.join(dirpath, 'signtool.exe'))
+    return sorted(cand)[-1] if cand else None
+
+
+def sign_windows(paths):
+    """Authenticode-sign the given files, if a certificate was given. No certificate is not an error: the build
+    then produces the same unsigned installer it always did, and SmartScreen warns the user about the publisher.
+
+    A signature without a timestamp stops being trusted the day the certificate expires, so every signature is
+    timestamped (RFC 3161). Signing the .exe files and the installer is what SmartScreen looks at; the bundled
+    DLLs do not need it."""
+    sha1, pfx = os.environ.get('WINDOWS_SIGN_SHA1'), os.environ.get('WINDOWS_SIGN_PFX')
+    if not (sha1 or pfx):
+        print('no WINDOWS_SIGN_SHA1 or WINDOWS_SIGN_PFX: leaving the build unsigned', flush=True)
+        return
+    tool = signtool()
+    if not tool:
+        raise SystemExit('a signing certificate was given but signtool.exe was not found (install the Windows SDK)')
+    url = os.environ.get('WINDOWS_TIMESTAMP_URL', 'http://timestamp.digicert.com')
+    cert = ['/sha1', sha1] if sha1 else ['/f', pfx]
+    if pfx and os.environ.get('WINDOWS_SIGN_PASSWORD'):
+        cert += ['/p', os.environ['WINDOWS_SIGN_PASSWORD']]
+    for path in paths:
+        run(tool, 'sign', '/fd', 'sha256', '/tr', url, '/td', 'sha256', *cert, path)
+    run(tool, 'verify', '/pa', *paths)                              # fails the build if a signature did not take
 
 
 def main():
@@ -123,10 +169,15 @@ def main():
     elif sys.platform == 'win32':
         iscc = shutil.which('iscc') or next((p for p in (r'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
                                                          r'C:\Program Files\Inno Setup 6\ISCC.exe') if os.path.exists(p)), None)
+        # the programs first, so the installer carries signed files, then the installer itself: that is the one
+        # SmartScreen judges when the user runs the download.
+        sign_windows([os.path.join(folder, name) for name in ('LunarAtlas.exe', 'lunaratlas-cli.exe')
+                      if os.path.exists(os.path.join(folder, name))])
         if iscc:
             run(iscc, f'/DVersion={a.version}', f'/DSource={folder}', f'/O{DIST}',
                 f'/FLunarAtlas-{a.version}-windows-setup', os.path.join(HERE, 'windows', 'lunaratlas.iss'))
             out = f'{base}-windows-setup.exe'
+            sign_windows([out])
         else:
             print('Inno Setup (iscc) not found: making a .zip instead of an installer')
             out = shutil.make_archive(f'{base}-windows-{arch}', 'zip', DIST, 'LunarAtlas')
