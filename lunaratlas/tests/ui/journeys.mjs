@@ -914,7 +914,7 @@ const J = {
     await b.until(`(() => { const i = document.getElementById('wimg'); return !document.getElementById('wthumb').hidden && i.complete && i.naturalWidth > 0; })()`,
                   10000, 'the thumbnail of the photo being worked on');
     const named = await b.js(`document.getElementById('wname').textContent`);
-    await ok(named === args.image.split('/').pop(), `and the name of that photo beside it ("${named}")`);
+    await ok(named === args.image.split(/[\\/]/).pop(), `and the name of that photo beside it ("${named}")`);
     await b.js(`(function () {                     // a small JPEG, as chosen from disk before the upload answers
       const c = document.createElement('canvas'); c.width = c.height = 8;
       return new Promise((r) => c.toBlob((blob) => { file = new File([blob], 'chosen.jpg'); path = null; showPhoto(); r(1); }, 'image/jpeg'));

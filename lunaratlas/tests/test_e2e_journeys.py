@@ -414,7 +414,25 @@ class BrowserJourneys(Journey):
                 return None
             with open(dom, encoding='utf-8', errors='replace') as fh:
                 return re.search(r'<pre id="selftest">(.*?)</pre>', fh.read(), re.S)
-        m = wait_for(lambda: read() or (proc.poll() is not None and read()), 120, f'the {group} result')
+
+        def ready():
+            m = read()
+            if m:
+                return m
+            if proc.poll() is not None:          # chrome already exited: no point waiting out the rest of the budget
+                with open(err, errors='replace') as fh:
+                    log_text = fh.read()
+                raise AssertionError(f'chrome exited {proc.returncode} without a {group} result:\n{log_text[-2000:]}')
+            return None
+
+        try:
+            m = wait_for(ready, 120, f'the {group} result')
+        except AssertionError as e:
+            # ready() only raises once chrome has exited; reaching the timeout instead means it is still
+            # running (hung, or just never produced a dump) -- surface its log too, not just "did not happen"
+            with open(err, errors='replace') as fh:
+                log_text = fh.read()
+            raise AssertionError(f'{e} (chrome still running, pid {proc.pid}):\n{log_text[-2000:]}') from None
         with open(err, errors='replace') as fh:
             log_text = fh.read()
         self.assertIsNotNone(m, f'the self-test wrote no result:\n{log_text[-2000:]}')
