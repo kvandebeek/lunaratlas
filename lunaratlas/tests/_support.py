@@ -409,7 +409,10 @@ def find_webdriver(name, runner_dir=None):
 def _kill_chrome(proc, profile):
     """Chrome and every helper it started: they keep running (and holding the profile) after the parent dies."""
     if proc.poll() is None:
-        proc.kill()
+        try:
+            proc.kill()
+        except PermissionError:      # a snap-confined Chromium (Ubuntu) refuses the signal; the sweep below still runs
+            pass
     if os.name == 'posix':
         subprocess.run(['pkill', '-9', '-f', profile], capture_output=True)
     else:

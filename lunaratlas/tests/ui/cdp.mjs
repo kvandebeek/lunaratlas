@@ -5,6 +5,13 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
+// a browser we may not signal (the Chromium snap on Ubuntu: the pid we hold is the snap wrapper's, and EACCES comes
+// back, as an 'error' event or a throw) is not a failed journey; the sweep by profile and the session end still run
+function stop(proc, sig) {
+  proc.on('error', () => {});
+  try { proc.kill(sig); } catch { /* not ours to kill */ }
+}
+
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // every other timing budget in this suite scales by this (CI sets it higher; a slow dev machine can too), but
 // until()'s own timeouts never did, unlike every Python-side one -- found when a thumbnail round trip to a
@@ -62,7 +69,7 @@ export class Browser {
       'about:blank'], { stdio: 'ignore' });
     const portFile = join(profile, 'DevToolsActivePort');
     for (let i = 0; i < 150 && !existsSync(portFile); i++) await sleep(100);
-    if (!existsSync(portFile)) { proc.kill(); throw new Error('Chrome did not start'); }
+    if (!existsSync(portFile)) { stop(proc); throw new Error('Chrome did not start'); }
     let raw;
     // existsSync passing does not mean the file is done being written; on Windows, Chrome can still hold it
     // locked for a few ms, and readFileSync then throws EBUSY instead of ENOENT
@@ -77,7 +84,7 @@ export class Browser {
       catch { /* not up yet */ }
       if (!page) await sleep(100);
     }
-    if (!page) { proc.kill(); throw new Error('Chrome did not start'); }   // DevTools came up with no page tab
+    if (!page) { stop(proc); throw new Error('Chrome did not start'); }   // DevTools came up with no page tab
     const b = new Browser(proc, page.webSocketDebuggerUrl, width, height, profile);
     await b.open();
     return b;
@@ -134,7 +141,7 @@ export class Browser {
     try { this.ws.close(); } catch { /* gone */ }
     if (this.proc.exitCode === null) {
       const gone = new Promise((r) => this.proc.once('exit', r));
-      this.proc.kill('SIGKILL');
+      stop(this.proc, 'SIGKILL');
       await Promise.race([gone, sleep(5000)]);
     }
     // killing the one process we spawned does not reap its renderer/gpu/utility children (Node does not put
