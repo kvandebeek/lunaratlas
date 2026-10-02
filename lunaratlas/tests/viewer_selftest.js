@@ -15,6 +15,9 @@
   const click = async (x, y) => { ev('pointerdown', x, y); ev('pointerup', x, y); await wait(60); };
   const type = (id, text) => { const el = document.getElementById(id); el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); };
 
+  // where the page stood, for a failure message: slow machines have failed here with nothing placed
+  const diag = () => `fonts ${document.fonts.status}, edits ${T.edits ? 'loaded' : 'missing'}, ${T.placed.length} placed, zoom ${T.view.s.toFixed(2)}, window ${innerWidth}x${innerHeight}`;
+
   const GROUPS = {
     // what the page has once it has loaded: the whole gazetteer, one label per name, all on the canvas
     async load() {
@@ -125,7 +128,7 @@
       // the state is in the message because this has failed on CI (macOS) with the later checks, which assert the
       // same crater condition, passing -- and nothing said whether the switch was off or no crater was placed yet
       const nCrater = T.placed.filter((p) => p.f.c === 'crater').length;
-      ok(inp.checked && nCrater > 0, `craters are on and named (switch ${inp.checked ? 'on' : 'off'}, ${nCrater} crater names of ${T.placed.length} placed)`);
+      ok(inp.checked && nCrater > 0, `craters are on and named (switch ${inp.checked ? 'on' : 'off'}, ${nCrater} crater names of ${T.placed.length} placed; ${diag()})`);
       pill.click(); await wait(60); T.render();
       ok(!inp.checked, 'a click on the switch turns craters off');
       ok(!T.placed.some((p) => p.f.c === 'crater'), 'and their names go');
@@ -204,7 +207,9 @@
   try {
     // names are laid out after the edits have been fetched, so wait for that rather than for a fixed time (a
     // loaded CI machine can still be laying labels out well past a blind 1.5s, unlike GROUPS.load()'s own wait)
+    await Promise.race([document.fonts.ready, wait(5000)]);
     for (let i = 0; i < 60 && T.placed.length === 0; i++) await wait(200);
+    if (T.placed.length === 0) ok(false, `no name was placed at the start (${diag()})`);   // what the page was waiting for
     if (only) {
       if (GROUPS[only]) await GROUPS[only](); else ok(false, `unknown group ${only}`);
     } else {
@@ -230,7 +235,7 @@
          `moved label is drawn at the new place (${again ? (again.x - lab.x).toFixed(1) + ', ' + (again.y - lab.y).toFixed(1) : 'not placed'})`);
       key('z', { metaKey: true }); await wait(50);
       ok(!T.edits.labels[lab.f.n], 'undo puts the label back');
-    } else ok(false, 'no crater label to drag');
+    } else ok(false, `no crater label to drag (${diag()})`);
     key('m'); await click(600, 520); await click(900, 540);
     const m = T.edits.shapes.at(-1);
     ok(m && m.kind === 'measure' && m.b, `measurement saved (${T.edits.shapes.length} shapes)`);
