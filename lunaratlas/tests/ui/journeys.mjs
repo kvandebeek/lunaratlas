@@ -908,25 +908,25 @@ const J = {
     // the photo being worked on: nothing without a file or a path, the server's own thumbnail and the file's name
     // once there is a path, the browser's own copy of a small JPEG before the upload answers, and no empty frame
     // left behind by one that cannot be shown
-    await b.js(`(() => { path = null; file = null; showPhoto(); })()`);
+    await b.js(`(() => { __app.path = null; __app.file = null; showPhoto(); })()`);
     await ok(await b.js(`document.getElementById('wthumb').hidden`), 'no thumbnail box without a file or a path');
-    await b.js(`(() => { path = ${JSON.stringify(args.image)}; showPhoto(); })()`);
+    await b.js(`(() => { __app.path = ${JSON.stringify(args.image)}; showPhoto(); })()`);
     await b.until(`(() => { const i = document.getElementById('wimg'); return !document.getElementById('wthumb').hidden && i.complete && i.naturalWidth > 0; })()`,
                   10000, 'the thumbnail of the photo being worked on');
     const named = await b.js(`document.getElementById('wname').textContent`);
     await ok(named === args.image.split(/[\\/]/).pop(), `and the name of that photo beside it ("${named}")`);
     await b.js(`(function () {                     // a small JPEG, as chosen from disk before the upload answers
       const c = document.createElement('canvas'); c.width = c.height = 8;
-      return new Promise((r) => c.toBlob((blob) => { file = new File([blob], 'chosen.jpg'); path = null; showPhoto(); r(1); }, 'image/jpeg'));
+      return new Promise((r) => c.toBlob((blob) => { __app.file = new File([blob], 'chosen.jpg'); __app.path = null; showPhoto(); r(1); }, 'image/jpeg'));
     })()`);
     await b.until(`(() => { const i = document.getElementById('wimg'); return i.src.startsWith('blob:') && i.complete && i.naturalWidth > 0; })()`,
                   5000, 'the chosen file previewed from the browser itself');
     await ok(await b.text('#wname') === 'chosen.jpg', 'a photo still uploading is named from the file the user chose');
     await b.js(`(function () {                     // what a TIFF gets: no browser decodes one, so no box at all
-      file = new File([new Uint8Array(64)], 'mosaic.tif'); path = null; showPhoto();
+      __app.file = new File([new Uint8Array(64)], 'mosaic.tif'); __app.path = null; showPhoto();
     })()`);
     await ok(await b.js(`document.getElementById('wthumb').hidden`), 'a TIFF gets no local preview: the browser cannot decode one');
-    await b.js(`(() => { path = '/not/an/image/in/the/work/folder.tif'; showPhoto(); })()`);
+    await b.js(`(() => { __app.path = '/not/an/image/in/the/work/folder.tif'; showPhoto(); })()`);
     await b.until(`document.getElementById('wthumb').hidden`, 10000, 'the empty frame gone');
     await ok(true, 'a thumbnail the server cannot make leaves no empty frame, and the name stays');
     await ok(await b.js(`document.getElementById('wname').textContent.length > 0`), 'the name of a photo that cannot be shown is still there');

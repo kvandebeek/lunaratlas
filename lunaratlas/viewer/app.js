@@ -342,5 +342,7 @@ loadRecent();
 setInterval(() => fetch('/app/ping').catch(() => {}), 20000);
 
 // for tests/ui/journeys.mjs: a top-level `let` is not a window property anywhere, but Chrome's CDP
-// (Runtime.evaluate) still sees the page's own lexical scope, unlike Firefox's WebDriver/Marionette sandbox
-window.__app = { get st() { return st; } };
+// (Runtime.evaluate) still sees the page's own lexical scope, unlike Firefox's WebDriver/Marionette sandbox.
+// There a bare `path = x` from a test silently makes a new global instead of setting the page's own `path`
+// (so showPhoto() never saw it), hence the setters as well as the getter.
+window.__app = { get st() { return st; }, set path(v) { path = v; }, set file(v) { file = v; } };
