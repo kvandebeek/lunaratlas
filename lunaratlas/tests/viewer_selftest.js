@@ -5,7 +5,7 @@
    tests/test_e2e_journeys.py drives a single journey and reports its result quickly. Every group leaves the
    sidecar as it found it, so the groups can run in any order. */
 (async () => {
-  const out = [], ok = (c, m) => out.push((c ? 'PASS ' : 'FAIL ') + m);
+  const out = [], ok = (c, m) => { out.push((c ? 'PASS ' : 'FAIL ') + m); console.log('selftest ' + (c ? 'PASS ' : 'FAIL ') + String(m).slice(0, 80)); };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   for (let i = 0; i < 200 && !window.__atlas; i++) await wait(50);      // boot.js fetches the data, then starts the page
   const cv = document.getElementById('map'), T = window.__atlas;
@@ -204,6 +204,7 @@
   };
 
   const only = new URLSearchParams(location.search).get('group');
+  console.log('selftest start ' + (only || 'all') + ' (' + (window.__atlas ? 'page ready' : 'page not ready') + ')');
   try {
     // names are laid out after the edits have been fetched, so wait for that rather than for a fixed time (a
     // loaded CI machine can still be laying labels out well past a blind 1.5s, unlike GROUPS.load()'s own wait)

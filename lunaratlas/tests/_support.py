@@ -452,6 +452,7 @@ def dump_selftest(url, tmp, virtual_time_ms, attempts=5):
                                      '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
                                      '--host-resolver-rules=MAP * 127.0.0.1:1,EXCLUDE 127.0.0.1',
                                      f'--user-data-dir={profile}', '--window-size=1400,900',
+                                     '--enable-logging=stderr', '--v=0',                  # the page's console.log lines: where a stuck run stopped
                                      f'--virtual-time-budget={virtual_time_ms}', '--dump-dom', url],
                                     stdout=out, stderr=log)
         try:
@@ -476,7 +477,8 @@ def dump_selftest(url, tmp, virtual_time_ms, attempts=5):
             if text.strip() or last:                                      # real failure, or out of attempts
                 return None, ''.join(notes) + log
             why = f'exited ({proc.returncode}) without output' if proc.poll() is not None else f'wrote nothing in {wait_for_it:.0f}s'
-            notes.append(f'[launch {n} of {attempts}: {why}, retrying with a fresh profile; its log: {log[-400:]!r}]\n')
+            progress = ' | '.join(re.findall(r'CONSOLE[^\]]*\]\s*"?(.*?)"?,\s*source:', log)[-8:])    # the page's last words
+            notes.append(f'[launch {n} of {attempts}: {why}, retrying with a fresh profile; page progress: {progress!r}; its log: {log[-300:]!r}]\n')
             print(notes[-1].rstrip(), file=sys.stderr, flush=True)       # visible in the run, not only on failure
         finally:
             _kill_chrome(proc, profile)
