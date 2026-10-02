@@ -86,6 +86,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7, for the release-notes template
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: out
@@ -96,5 +97,9 @@ jobs:
         run: |
           (cd out && sha256sum * > SHA256SUMS.txt)          # so a download can be checked against the release
           tag="${GITHUB_REF_NAME#v}"; num="${tag%%-*}"; name="${tag#"$num"}"; name="${name#-}"
-          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes \
+          # the notes a downloader needs (which file, how to get past the unsigned-app warning, how to check the
+          # download) are the same every time, so they come from a template rather than being written again. Not
+          # --generate-notes: that linked a compare against the previous tag, which 404s once a tag is withdrawn.
+          sed -e "s/{VERSION}/$num/g" -e "s/{TAG}/$GITHUB_REF_NAME/g" packaging/release-notes.md > notes.md
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --notes-file notes.md \
             --title "LunarAtlas $num${name:+ – $name}"
