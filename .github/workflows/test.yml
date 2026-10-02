@@ -3,11 +3,15 @@
 # Run by hand with "full" for the slow tests and the 64 px/deg LOLA relief (≈ 530 MB more, as a first close-up does).
 name: Test
 
+# Only ever started by hand (Actions > Test > Run workflow), never by a push: give "tests" to run just those tests (dotted
+# names, space separated, e.g. test_e2e.BrowserSelfTest.test_selftest) on all three systems; leave it empty for the whole suite.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
     inputs:
+      tests:
+        description: 'Only these tests (dotted names, space separated); empty runs everything'
+        type: string
+        default: ''
       full:
         description: 'Slow tests and the close-up relief (≈ 530 MB more download)'
         type: boolean
@@ -28,6 +32,7 @@ jobs:
       run:
         shell: bash
     env:
+      TESTS: ${{ inputs.tests }}
       FULL: ${{ inputs.full && '1' || '' }}
       LUNARATLAS_SLOW_TESTS: ${{ inputs.full && '1' || '' }}
       # shared CI runners are slower than a desktop; Windows runners measurably more so for headless Chrome
@@ -72,9 +77,10 @@ jobs:
           EOF
       - name: Tests
         run: |
-          python lunaratlas/tests/run_tests.py 2>&1 | tee test.log
+          python lunaratlas/tests/run_tests.py $TESTS 2>&1 | tee test.log
           test "${PIPESTATUS[0]}" -eq 0
       - name: Nothing skipped that should have run
+        if: ${{ inputs.tests == '' }}
         # a missing download, Chrome or Node makes tests skip, which would pass without testing anything
         # platform exceptions and the 14 deliberately disabled long tests are allowed
         run: |

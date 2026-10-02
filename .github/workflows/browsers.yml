@@ -5,10 +5,15 @@
 # Every run downloads the reference data fresh, through the app's own first-use code, as a new user's machine would.
 name: Browsers
 
+# Only ever started by hand, never by a push: give "tests" to run just those (test_ui.UI.test_measuring_a_distance ...),
+# empty runs all of test_ui.py.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
+    inputs:
+      tests:
+        description: 'Only these tests (dotted names, space separated); empty runs all UI journeys'
+        type: string
+        default: ''
 
 permissions:
   contents: read              # what the build and the tests need; only the release job may write
@@ -30,6 +35,7 @@ jobs:
       run:
         shell: bash
     env:
+      TESTS: ${{ inputs.tests }}
       LUNARATLAS_BROWSER: ${{ matrix.browser }}
       # shared CI runners are slower than a desktop; Windows runners measurably more so for headless Chrome
       LUNARATLAS_PERF_FACTOR: ${{ matrix.os == 'windows-latest' && '6' || '3' }}
@@ -68,9 +74,10 @@ jobs:
           EOF
       - name: UI journeys in ${{ matrix.browser }}
         run: |
-          python lunaratlas/tests/run_tests.py --pattern 'test_ui.py' 2>&1 | tee test.log
+          python lunaratlas/tests/run_tests.py --pattern 'test_ui.py' $TESTS 2>&1 | tee test.log
           test "${PIPESTATUS[0]}" -eq 0
       - name: Nothing skipped that should have run
+        if: ${{ inputs.tests == '' }}
         # missing dependencies still fail; browser exceptions and the two deliberately disabled long tests are allowed
         run: |
           bad=$(grep -E "skipped '" test.log | grep -vE "not in this browser|disabled by request: exceeds runtime target" || true)

@@ -3,9 +3,11 @@
 Examples:
     python lunaratlas/tests/run_tests.py
     python lunaratlas/tests/run_tests.py --pattern 'test_ui.py'
+    python lunaratlas/tests/run_tests.py test_e2e.BrowserSelfTest.test_selftest test_ui.UI.test_measuring_a_distance
 """
 import argparse
 import os
+import sys
 import unittest
 
 
@@ -38,9 +40,14 @@ class ProgressRunner(unittest.TextTestRunner):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--pattern', default='test*.py', help='unittest discovery filename pattern')
+    p.add_argument('tests', nargs='*', help='only these tests, by dotted name (test_e2e.BrowserSelfTest.test_selftest); none: all')
     p.add_argument('-q', '--quiet', action='store_true', help="hide unittest's per-test result line (the percentage remains)")
     a = p.parse_args()
-    suite = unittest.defaultTestLoader.discover(HERE, pattern=a.pattern, top_level_dir=HERE)
+    if a.tests:
+        sys.path.insert(0, HERE)
+        suite = unittest.defaultTestLoader.loadTestsFromNames(a.tests)
+    else:
+        suite = unittest.defaultTestLoader.discover(HERE, pattern=a.pattern, top_level_dir=HERE)
     total = suite.countTestCases()
     result = ProgressRunner(total, verbosity=1 if a.quiet else 2, resultclass=ProgressResult).run(suite)
     raise SystemExit(not result.wasSuccessful())
