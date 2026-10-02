@@ -597,7 +597,8 @@ const J = {
     await b.until(`!document.getElementById('annot').hidden`, 3000, 'the text editor');
     await b.type('Reloaded'); await b.click('#aOk');
     await b.goto(BASE + '/', ready);
-    await sleep(500);
+    // the count is set once the edits have been fetched, which a slow browser can take longer over than a fixed pause
+    await b.until(`document.getElementById('n-mine').textContent === '2'`, 5000, 'the drawing count after the reload').catch(() => {});
     const nm = await b.text('#n-mine');
     await ok(nm === '2', `a reload straight after an edit keeps it too (${nm} drawings, saved: ${JSON.stringify((await b.js(`fetch('/edits').then((r) => r.json())`)).shapes.map((q) => q.label))})`);
   },
@@ -653,7 +654,7 @@ const J = {
     await b.click('#night button[data-v="show"]');
     await serverHas(b, (e) => e.shapes.length === 1 && e.hidden.includes(p.n) && e.style.grid && e.style.night === 'show', 'all the edits');
     await b.goto(BASE + '/', ready);
-    await sleep(600);
+    await b.until(`document.getElementById('n-mine').textContent === '1'`, 5000, 'the drawing count after the reload').catch(() => {});
     await ok(await b.text('#n-mine') === '1', 'after a reload my drawing is back');
     await ok(await b.js(`document.getElementById('l-grid').checked`), 'the grid is still on');
     await ok(await b.js(`document.querySelector('#night button.on').dataset.v`) === 'show', 'the night setting is kept');
