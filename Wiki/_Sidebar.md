@@ -11,6 +11,7 @@
 - [The quality check](The-quality-check)
 - [Troubleshooting](Troubleshooting)
 - [Limits](Limits)
+- [Testing](Testing)
 
 **Deeper**
 - [The command line](The-command-line)
