@@ -1,6 +1,7 @@
 # The packaged LunarAtlas for macOS (Apple silicon and Intel), Windows and Linux.
-# Run it by hand (Actions > Build app > Run workflow) or push a tag v1.2.3: a tag also makes a draft release with
-# the installers attached.
+# Run it by hand (Actions > Build app > Run workflow) or push a tag v1.2.3 or v1.2.3-Crater: a tag also makes a draft
+# release with the installers attached, titled "LunarAtlas 1.2.3 – Crater". Only the number goes into the app (macOS
+# and Windows want version numbers); the crater name is the release's.
 name: Build app
 
 on:
@@ -40,9 +41,10 @@ jobs:
         if: runner.os == 'Windows'
         run: command -v iscc || test -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" || choco install innosetup -y --no-progress
       - name: Version
-        # the tag's number, else 0.0.0 (Windows file versions must be numbers)
+        # the tag's number (v1.0.0-Langrenus: 1.0.0), else 0.0.0: macOS and Windows want numbers
         run: |
-          v=0.0.0; [[ "$GITHUB_REF" == refs/tags/v* ]] && v="${GITHUB_REF_NAME#v}"
+          v=0.0.0; [[ "$GITHUB_REF" == refs/tags/v* ]] && v="${GITHUB_REF_NAME#v}" && v="${v%%-*}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $GITHUB_REF_NAME: expected v1.2.3 or v1.2.3-Crater"; exit 1; }
           echo "LUNARATLAS_VERSION=$v" >> "$GITHUB_ENV"
       - name: Build
         run: python packaging/build.py --version "$LUNARATLAS_VERSION"
@@ -93,4 +95,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           (cd out && sha256sum * > SHA256SUMS.txt)          # so a download can be checked against the release
-          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "LunarAtlas ${GITHUB_REF_NAME#v}"
+          tag="${GITHUB_REF_NAME#v}"; num="${tag%%-*}"; name="${tag#"$num"}"; name="${name#-}"
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes \
+            --title "LunarAtlas $num${name:+ – $name}"
