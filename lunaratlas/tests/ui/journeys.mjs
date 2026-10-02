@@ -264,10 +264,12 @@ const J = {
     await b.wheel(cx, cy, 400);
     await ok(Math.abs(await zoom(b) - s0) / s0 < 0.05, 'the wheel back zooms out again');
     await b.clickAt(cx, cy, { count: 2 });
-    await ok(Math.abs(await zoom(b) / s0 - 2) < 0.05, 'a double-click zooms in 2×');
+    const zIn = await zoom(b) / s0;
+    await ok(Math.abs(zIn - 2) < 0.05, `a double-click zooms in 2× (measured ×${zIn.toFixed(3)})`);
     await b.clickAt(cx, cy, { mods: ['shift'], count: 2 });
     await sleep(100);
-    await ok(Math.abs(await zoom(b) / s0 - 1) < 0.05, 'Shift+double-click zooms out 2×');
+    const zOut = await zoom(b) / s0;
+    await ok(Math.abs(zOut - 1) < 0.05, `Shift+double-click zooms out 2× (back to ×${zOut.toFixed(3)} of the start)`);
     const v0 = await b.js('[__atlas.view.x, __atlas.view.y]');
     await b.drag(cx - 100, cy + 50, cx + 100, cy - 50);
     const v1 = await b.js('[__atlas.view.x, __atlas.view.y]');
@@ -295,7 +297,11 @@ const J = {
     for (let i = 0; i < 16; i++) await b.wheel(cx, cy, 600);
     await ok(await zoom(b) > 0, 'zooming out stops at a minimum');
     await b.press('f');
-    await ok(await b.text('#slabel') === km0, 'the scale bar is back to where it started');
+    // #slabel is written by render(), which redraw() defers to the next animation frame: it lags the zoom state
+    // (which zoom(b) reads directly) by a frame, and a loaded runner can be several frames late
+    try { await b.until(`document.getElementById('slabel').textContent === ${JSON.stringify(km0)}`, 3000, 'the scale bar'); } catch { /* the check below reports what it saw */ }
+    const kmNow = await b.text('#slabel');
+    await ok(kmNow === km0, `the scale bar is back to where it started (${kmNow}, expected ${km0})`);
   },
 
   // ---------------------------------------------------------------- the search box
