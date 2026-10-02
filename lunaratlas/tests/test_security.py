@@ -75,9 +75,11 @@ class ViewerIsLocalOnly(unittest.TestCase):
                     self.assertNotIn(b'moon.tif', data)
 
     def test_the_token_link_hands_the_browser_a_cookie_and_goes_on_without_it(self):
-        code, hdr, _ = self.req('GET', f'/?t={self.v.token}&group=x', auth=False)
-        self.assertEqual(code, 303)
-        self.assertEqual(hdr['location'], '/?group=x', 'the token is gone from the address, the rest stays')
+        code, hdr, page = self.req('GET', f'/?t={self.v.token}&group=x', auth=False)
+        self.assertEqual(code, 200, 'a page of its own, not a redirect: a cross-site chain would keep the cookie back')
+        self.assertIn(b'content="0; url=/?group=x"', page, 'the token is gone from the address, the rest stays')
+        self.assertNotIn(self.v.token.encode(), page)
+        self.assertIn(b'url=/x"', self.req('GET', f'//x?t={self.v.token}', auth=False)[2], 'never on to another host')
         cookie = hdr['set-cookie']
         for part in ('HttpOnly', 'SameSite=Strict', f'{self.v.cookie}'):
             self.assertIn(part, cookie)

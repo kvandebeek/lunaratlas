@@ -802,16 +802,27 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def enter(self, path, query):
-        """The link with the token (?t=…) sets the cookie and goes on to the same page without it. False: not that."""
+        """The link with the token (?t=…) sets the cookie and goes on to the same page without it. False: not that.
+
+        It goes on with a page of its own (a meta refresh), not a 303: a redirect chain that a cross-site navigation
+        started (the file:// hand-off page, see handoff_url) stays cross-site to its end, so the page it lands on
+        would arrive as Sec-Fetch-Site: cross-site without the SameSite=Strict cookie, and be refused (Safari showed
+        a 403 until a reload). A navigation this server's own page starts is same-origin and carries the cookie."""
         q = parse_qs(query, keep_blank_values=True)
         t = (q.pop('t', None) or [''])[0]
         if not (t and self.srv.token and hmac.compare_digest(t.encode(), self.srv.token.encode())):
             return False
-        self.send_response(303)
-        self.send_header('Location', path + ('?' + urlencode(q, doseq=True) if q else ''))
+        target = html.escape('/' + path.lstrip('/') + ('?' + urlencode(q, doseq=True) if q else ''), quote=True)  # never //host
+        body = (f'<!doctype html><meta charset="utf-8"><title>LunarAtlas</title>'
+                f'<meta http-equiv="refresh" content="0; url={target}">'
+                f'<body>Opening LunarAtlas… <a href="{target}">click here</a> if nothing happens.</body>').encode()
+        self.send_response(200)
         self.send_header('Set-Cookie', f'{self.srv.cookie_name}={self.srv.token}; Path=/; HttpOnly; SameSite=Strict')
-        self.send_header('Content-Length', '0')
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
+        self.wfile.write(body)
         return True
 
     def page(self):
