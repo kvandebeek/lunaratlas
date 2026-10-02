@@ -23,11 +23,20 @@ first time. This is the standard warning for any unsigned app, not a sign that a
   **System Settings → Privacy & Security**, scroll down, and press **Open Anyway**. You do this once.
 - **Windows** shows *"Windows protected your PC"*. Press **More info**, then **Run anyway**. Once.
 
-If you would rather check the download first, every release lists `SHA256SUMS.txt`:
+If you would rather check the download first, every release has a `SHA256SUMS.txt`. Put it next to the
+file you downloaded, then:
 
 ```sh
-shasum -a 256 -c SHA256SUMS.txt      # macOS and Linux
+shasum -a 256 --ignore-missing -c SHA256SUMS.txt      # macOS
+sha256sum --ignore-missing -c SHA256SUMS.txt          # Linux
 ```
+
+```powershell
+Get-FileHash LunarAtlas-1.0.0-windows-setup.exe       # Windows; compare with the line in SHA256SUMS.txt
+```
+
+You want to see `OK` for your file. `--ignore-missing` matters: the file lists all four downloads, and
+without it the three you did not download are reported as **FAILED**, which looks alarming and is not.
 
 ## What happens on the first photo
 

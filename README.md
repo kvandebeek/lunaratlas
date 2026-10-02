@@ -9,7 +9,7 @@
 Like LROC QuickMap, but with your data.
 
 <p>
-  <a href="https://github.com/kvandebeek/lunaratlas/releases/latest"><img src="https://img.shields.io/github/v/release/kvandebeek/lunaratlas?label=Download&color=F5A742&labelColor=0A0F25" alt="Download the latest release"></a>
+  <a href="https://github.com/kvandebeek/lunaratlas/releases/latest"><img src="https://img.shields.io/github/v/release/kvandebeek/lunaratlas?label=Download&color=F5A742&labelColor=0A0F25&cacheSeconds=300" alt="Download the latest release"></a>
   <a href="https://github.com/kvandebeek/lunaratlas/wiki"><img src="https://img.shields.io/badge/Manual-wiki-8FD8EC?labelColor=0A0F25" alt="The manual, in the wiki"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/Licence-Apache%202.0-B7BFD8?labelColor=0A0F25" alt="Licence: Apache 2.0"></a>
 </p>
