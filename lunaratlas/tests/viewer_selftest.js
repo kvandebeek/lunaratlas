@@ -116,7 +116,9 @@
 
     // the switch itself turns a layer off and on, not only its label
     async switches() {
-      for (let i = 0; i < 60 && T.placed.length === 0; i++) await wait(200);
+      // not just T.placed.length === 0: if names are placed incrementally, the first few on screen may all be
+      // non-craters, and the very next line needs a crater specifically to be among them
+      for (let i = 0; i < 60 && !T.placed.some((p) => p.f.c === 'crater'); i++) await wait(200);
       const inp = document.getElementById('l-crater'), pill = inp.nextElementSibling;
       ok(inp.checked && T.placed.some((p) => p.f.c === 'crater'), 'craters are on and named');
       pill.click(); await wait(60); T.render();
@@ -195,7 +197,9 @@
 
   const only = new URLSearchParams(location.search).get('group');
   try {
-    await wait(1500);
+    // names are laid out after the edits have been fetched, so wait for that rather than for a fixed time (a
+    // loaded CI machine can still be laying labels out well past a blind 1.5s, unlike GROUPS.load()'s own wait)
+    for (let i = 0; i < 60 && T.placed.length === 0; i++) await wait(200);
     if (only) {
       if (GROUPS[only]) await GROUPS[only](); else ok(false, `unknown group ${only}`);
     } else {
