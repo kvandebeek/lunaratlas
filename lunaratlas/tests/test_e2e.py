@@ -405,16 +405,16 @@ class CloseUp(unittest.TestCase):
 
     @S.disabled_for_speed
     def test_blind_search(self):
-        from atlas_closeup import Relief, render_shaded, OPTICS_FILE, TELESCOPE, arcsec_per_px, KM_PER_ARCSEC_PER_KM
+        from atlas_closeup import Relief, render_shaded, OPTICS_FILE, arcsec_per_px, KM_PER_ARCSEC_PER_KM
         from atlas_ephem import ephemeris
         tmp = tempfile.mkdtemp(prefix='lunaratlas_closeup_')
         self.addCleanup(shutil.rmtree, tmp, True)
         when = datetime(2026, 9, 23, 21, 38, 6, tzinfo=timezone.utc)
         name = os.path.join(tmp, '2026-09-23-2138_1-Moon_Filter 4_lapl2_ap5276.tif')
         e = ephemeris(when)
-        setup = dict(extender='native', magnification=1.0, camera='IMX678', pixel_um=2.0)
+        setup = dict(telescope='250 PDS', extender='native', magnification=1.0, focal_mm=1200.0, camera='IMX678', pixel_um=2.0)
         with open(os.path.join(tmp, OPTICS_FILE), 'w') as fh:
-            json.dump(dict(setup, telescope=TELESCOPE[0], focal_mm=TELESCOPE[1], text='test optics'), fh)
+            json.dump(dict(setup, text='test optics'), fh)
         km = arcsec_per_px(setup) * e['distance_km'] * KM_PER_ARCSEC_PER_KM
         W, H, ang = 1600, 1200, 25.0
         R = ag.R_MOON / km

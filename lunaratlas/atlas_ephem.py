@@ -5,8 +5,8 @@
   subsolar point       where the Sun is overhead: the lighting (colongitude = 90° − its longitude)
   distance             Earth–Moon (km, topocentric): the image scale for a known pixel angle
 
-The observer's site (for the parallax) comes from LUNARATLAS_OBSERVER_LAT / _LON / _HEIGHT_M in a .env file in the
-scripts folder (or the environment); default Belgium.
+The observer's site (for the parallax) is the one set in the app (Settings, atlas_equipment); without one the
+ephemeris is geocentric (the parallax moves the libration by at most 1°).
 
 Accuracy against the positions lunaratlas fitted on the user's images: see tests (≈ 0.1–0.3° in libration).
 """
@@ -18,21 +18,20 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import tool_settings as ts  # noqa: E402
+import atlas_equipment  # noqa: E402
 
 R_EARTH = 6378.14
 DEG = math.pi / 180
-OBSERVER_DEFAULT = (50.9, 4.4, 0.05)  # lat °N, lon °E, height km: Belgium; only the parallax (≤ 1° of libration) uses it
+SITE = 'site'                          # obs= default: the user's site, read when used (Settings can change it)
 
 
 def observer():
-    """(lat °N, lon °E, height km) from LUNARATLAS_OBSERVER_LAT / _LON / _HEIGHT_M (.env or environment)."""
-    return (ts.get('LUNARATLAS_OBSERVER_LAT', OBSERVER_DEFAULT[0], float),
-            ts.get('LUNARATLAS_OBSERVER_LON', OBSERVER_DEFAULT[1], float),
-            ts.get('LUNARATLAS_OBSERVER_HEIGHT_M', OBSERVER_DEFAULT[2] * 1000, float) / 1000)
+    """(lat °N, lon °E, height km) of the user's site, or None (geocentric) when none is set."""
+    return atlas_equipment.site()
 
 
-OBSERVER = observer()
+def _obs(obs):
+    return observer() if obs == SITE else obs
 
 # ch. 47, table 47.A: (D, M, M', F, Σl coefficient 1e-6°, Σr coefficient 1e-3 km), largest terms
 TERMS_LR = [
@@ -139,8 +138,12 @@ def eq_to_ecl(ra, dec, eps):
     return lam / DEG % 360, beta / DEG
 
 
-def topocentric(lam, beta, dist, eps, jd_ut, obs=OBSERVER):
-    """Ecliptic position and distance of the Moon seen from the observer (vector difference, exact)."""
+def topocentric(lam, beta, dist, eps, jd_ut, obs=SITE):
+    """Ecliptic position and distance of the Moon seen from the observer (vector difference, exact); obs None:
+    from the Earth's centre."""
+    obs = _obs(obs)
+    if obs is None:
+        return lam, beta, dist
     ra, dec = ecl_to_eq(lam, beta, eps)
     x = dist * math.cos(dec * DEG) * math.cos(ra * DEG)
     y = dist * math.cos(dec * DEG) * math.sin(ra * DEG)
@@ -173,7 +176,7 @@ def _sub_point(lam, beta, omega, F):
     return lat, lon
 
 
-def ephemeris(t, obs=OBSERVER):
+def ephemeris(t, obs=SITE):
     """dict(sub_obs_lat, sub_obs_lon, sub_sun_lat, sub_sun_lon, colongitude, distance_km, phase_angle) at UTC t."""
     jde = julian_day(t)
     jd_ut = jde - 69.0 / 86400
@@ -211,13 +214,13 @@ def phase_summary(e):
     return dict(illumination=k, waxing=waxing, name=name)
 
 
-def phase_text(t, obs=OBSERVER):
+def phase_text(t, obs=SITE):
     """'first quarter, 51 % lit' at UTC t."""
     p = phase_summary(ephemeris(t, obs))
     return f"{p['name']}, {p['illumination'] * 100:.0f} % lit"
 
 
-def sky_text(t, obs=OBSERVER):
+def sky_text(t, obs=SITE):
     """One line about the sky at UTC t: 'first quarter, 51 % lit · Sun overhead at 1.2° N 42.0° E · colongitude 358°'."""
     e = ephemeris(t, obs)
     p = phase_summary(e)

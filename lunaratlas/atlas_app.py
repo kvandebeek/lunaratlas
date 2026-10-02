@@ -28,6 +28,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 
+import atlas_equipment as eq
 from atlas_ephem import SHARPCAP
 from atlas_geo import load_geo, sha256_file, sidecar_path
 from atlas_paths import (CACHE, IMAGE_EXT, _UMASK, cv_imread, is_export_name, private_dir, publish, self_command,
@@ -94,6 +95,10 @@ class App:
             h.json(dict(folder=self.folder, images=self.recent()))
         elif p == '/app/thumb':
             self.thumb(h)
+        elif p == '/settings':
+            h.file(os.path.join(PAGE, 'settings.html'), 'text/html; charset=utf-8')
+        elif p == '/app/equipment':
+            h.json(equipment_state())
         else:
             return False
         return True
@@ -117,11 +122,26 @@ class App:
                 return h.json(dict(error='an export of the current image is still running: wait for it, or cancel '
                                         'it from that image'), 409) or True
             self.path, self.error, self.lines = path, None, []
+            setup = o.get('setup')
+            if setup is not None and (not isinstance(setup, str) or eq.find(setup) is None):
+                return h.json(dict(error='that setup is not in the equipment any more'), 400) or True
             if p == '/app/locate':
-                self.locate(path, bool(o.get('force')))
+                self.locate(path, bool(o.get('force')), setup, bool(o.get('any_scale')))
             else:
                 self.open(path)
             h.json(dict(ok=True))
+        elif p in ('/app/equipment', '/app/equipment/add'):
+            try:
+                o = h.body()
+                if p == '/app/equipment':
+                    eq.save(o.get('equipment') if isinstance(o, dict) else None)
+                    return h.json(equipment_state()) or True
+                _, sid = eq.add(o.get('telescope'), o.get('barlow'), o.get('camera'), o.get('binning') or 1)
+            except (ValueError, AttributeError, TypeError, StopIteration) as e:
+                return h.json(dict(error=str(e) or 'not a valid equipment entry'), 400) or True
+            except OSError as e:
+                return h.json(dict(error=f'could not save the equipment: {e.strerror or e}'), 500) or True
+            h.json(dict(equipment_state(), setup=sid))
         elif p == '/app/folder':
             os.makedirs(self.folder, exist_ok=True)
             reveal(self.folder)
@@ -237,9 +257,10 @@ class App:
         geo, _ = load_geo(path)
         return geo is not None
 
-    def locate(self, path, force):
+    def locate(self, path, force, setup=None, any_scale=False):
         self.phase, self.cancelled = 'locating', False
-        cmd = self_command('locate', path) + (['--force'] if force else [])
+        cmd = self_command('locate', path) + (['--force'] if force else []) + ['--ask-equipment'] \
+            + (['--setup', setup] if setup else []) + (['--any-scale'] if any_scale else [])
         self.say(f'positioning {os.path.basename(path)}')
         self.job = ExportJob(cmd, sidecar_path(path))
 
@@ -253,6 +274,8 @@ class App:
                 self.say('cancelled')
             elif self.job.state == 'done':
                 self.open(path)
+            elif eq.NEED in (self.job.error or ''):
+                self.phase, self.error = 'equipment', None              # the page asks what took it, then again
             else:
                 self.phase, self.error = 'failed', self.job.error
         threading.Thread(target=wait, daemon=True).start()
@@ -303,6 +326,9 @@ class App:
 
     def cancel(self):
         """Stop a locate that runs (the page's Cancel): True when there was one. Opening takes seconds and runs on."""
+        if self.phase == 'equipment':                 # the page's question was put away: nothing waits for it
+            self.phase = 'idle'
+            return True
         if self.phase != 'locating' or self.job is None or self.job.proc.poll() is not None:
             return False
         self.cancelled = True
@@ -359,6 +385,18 @@ class App:
                             status='unsolved' if geo is None else 'low' if low else 'solved', reasons=reasons,
                             forced=bool(low and isinstance(g, dict) and g.get('forced')), taken=taken(p)))
         return sorted(out, key=lambda r: -r['mtime'])[:30]
+
+
+def equipment_state():
+    """What the page shows: the equipment, every setup (ticked off too) with its scale, the recent ones first."""
+    d = eq.load()
+    rows = []
+    for s in eq.setups(d, include_unused=True):
+        r = dict(s, text=eq.text(s), arcsec=round(eq.arcsec_per_px(s), 4))
+        if s.get('width'):
+            r['field_arcmin'] = [round(s['width'] * r['arcsec'] / 60, 1), round(s['height'] * r['arcsec'] / 60, 1)]
+        rows.append(r)
+    return dict(equipment=d, setups=rows, recent=d['recent'])
 
 
 def taken(path):

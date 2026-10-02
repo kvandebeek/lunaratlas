@@ -120,6 +120,42 @@ footer { margin-top: auto; padding-top: 22px; display: flex; justify-content: sp
 footer .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 footer > .linkbtn { flex: none; }
 
+/* ---- equipment: "Taken with" and the short form */
+select.setup, .eq input { font: inherit; background: var(--bg-0); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: 8px; padding: 7px 10px; color-scheme: dark; }
+select.setup { max-width: 100%; }
+select.setup:focus-visible, .eq input:focus-visible { outline: none; box-shadow: var(--focus); }
+dialog#eqform { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; color: var(--text);
+  background: var(--bg-1); border: 1px solid var(--line-strong); border-radius: var(--radius-l); box-shadow: var(--shadow); }
+dialog#eqform::backdrop { background: var(--scrim); }
+.eq form { padding: 24px; display: grid; gap: 16px; }
+.eq h2 { margin: 0; font-size: 21px; font-weight: 600; }
+.eq .photo { color: var(--text-3); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eq .q { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 6px 14px; align-items: start; }
+.eq .q > b { font-weight: 500; padding-top: 7px; }
+.eq .pair { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 10px; }
+.eq .pair input, .eq .q input { width: 100%; }
+.eq small { color: var(--text-3); font-size: 12.5px; display: block; margin-top: 3px; }
+.eq .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.eq .chips button { height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--line-strong); background: transparent;
+  color: var(--text-2); font: inherit; font-size: 14px; cursor: pointer; }
+.eq .chips button:hover { color: var(--text); border-color: rgba(255, 255, 255, .26); }
+.eq .chips button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.eq .chips button:focus-visible { outline: none; box-shadow: var(--focus); }
+.eq .chips input { width: 80px; }
+.eq .combo { position: relative; }
+.eq ul.list { position: absolute; z-index: 2; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px 0; list-style: none;
+  max-height: 260px; overflow: auto; background: var(--bg-0); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow); }
+.eq ul.list .grp { padding: 8px 12px 2px; font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); }
+.eq ul.list .opt { display: flex; justify-content: space-between; gap: 10px; padding: 7px 12px; font-size: 14px; cursor: pointer; }
+.eq ul.list .opt small { margin: 0; }
+.eq ul.list .opt.hl, .eq ul.list .opt:hover { background: var(--bg-3); }
+.eq ul.list .own { color: var(--accent); border-top: 1px solid var(--line); }
+.eq .scale { padding: 10px 12px; border-radius: 10px; background: var(--bg-2); color: var(--text-2); font-size: 14px; }
+.eq .foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.eq .note { color: var(--text-3); font-size: 13px; border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
+.eq .note a { color: var(--text-2); }
+
 @media (max-width: 560px) {
   #drop { flex-direction: column; text-align: center; }
   .formats { justify-content: center; }
@@ -178,6 +214,11 @@ footer > .linkbtn { flex: none; }
       <p class="hint">Needed for close-ups that do not show the edge of the Moon. For other photos it makes the result a little
         more precise. Leave it empty if you do not know.</p>
     </div>
+    <div id="setupbox" hidden>
+      <label class="lbl" for="setup">Taken with</label>
+      <select id="setup" class="setup"></select>
+      <p class="hint">Only used for close-ups: it tells LunarAtlas the scale to search.</p>
+    </div>
     <div class="row">
       <button class="btn primary lg" id="go">Find the names</button>
       <button class="btn ghost lg" id="cancel">Choose another</button>
@@ -197,6 +238,8 @@ footer > .linkbtn { flex: none; }
     <div class="row">
       <button class="btn" id="stop">Cancel</button>
       <button class="btn primary" id="force" hidden>Name it anyway</button>
+      <button class="btn primary" id="anyscale" hidden>Try every scale</button>
+      <button class="btn" id="othersetup" hidden>It was another setup…</button>
       <button class="btn" id="again" hidden>Choose another photo</button>
     </div>
     <details class="log" open><summary>Details</summary>
@@ -211,11 +254,51 @@ footer > .linkbtn { flex: none; }
 
   <footer>
     <span class="path">Photos and exports are kept in <button class="linkbtn" id="folder" title="Show in the file manager"></button></span>
+    <a class="linkbtn" href="/settings" id="settings">Settings</a>
     <button class="linkbtn" id="quit">Quit LunarAtlas</button>
   </footer>
 </main>
+<dialog id="eqform" class="eq" aria-labelledby="eqtitle">
+  <form method="dialog">
+    <div><h2 id="eqtitle">A close-up: what took it?</h2><div class="photo" id="eqphoto"></div></div>
+    <p class="hint" style="margin:0">To find where on the Moon this is, LunarAtlas needs the scale of the picture. Asked once:
+      your next close-ups use the same answer. Full-disk photos never need this.</p>
+    <div class="q"><b>Telescope</b>
+      <div class="pair">
+        <label><input id="eqname" autocomplete="off" placeholder="e.g. 250 PDS"><small>Name</small></label>
+        <label><input id="eqfocal" inputmode="decimal" autocomplete="off" placeholder="mm"><small>Focal length in mm, without barlow</small></label>
+      </div>
+    </div>
+    <div class="q"><b>Barlow</b>
+      <div class="chips" id="eqbarlows" role="group" aria-label="Barlow">
+        <button type="button" data-v="1">None</button><button type="button" data-v="1.5">1.5×</button>
+        <button type="button" data-v="2">2×</button><button type="button" data-v="2.5">2.5×</button>
+        <button type="button" data-v="3">3×</button><button type="button" data-v="other">Other…</button>
+        <span id="eqother" hidden><input id="eqfactor" inputmode="decimal" aria-label="Barlow factor" placeholder="×"></span>
+      </div>
+    </div>
+    <div class="q"><b>Camera</b>
+      <div>
+        <div class="combo"><input id="eqcam" autocomplete="off" placeholder="Model or sensor, e.g. ASI678MC or IMX585"
+          aria-label="Camera model or sensor" aria-controls="eqcamlist"><ul class="list" id="eqcamlist" role="listbox" hidden></ul></div>
+        <small id="eqcamdesc"></small>
+        <label id="eqown" hidden><input id="equm" inputmode="decimal" placeholder="µm" style="width:100px;margin-top:6px"><small>Pixel size in µm</small></label>
+        <div class="chips" id="eqbins" role="group" aria-label="Binning" style="margin-top:8px"><small style="margin:0 4px 0 0">Binning</small>
+          <button type="button" data-v="1">1×1</button><button type="button" data-v="2">2×2</button></div>
+      </div>
+    </div>
+    <div class="scale" id="eqscale"></div>
+    <p class="err" id="eqerr" hidden></p>
+    <div class="foot">
+      <button type="button" class="linkbtn" id="eqany">Not sure: search every scale</button>
+      <button type="submit" class="btn primary lg" id="eqgo">Find it on the Moon</button>
+    </div>
+    <p class="note">More telescopes, barlows and cameras: <a href="/settings">Settings</a>, any time.</p>
+  </form>
+</dialog>
 <script src="/friendly.js"></script>
 <script src="/exif.js"></script>
+<script src="/equipment.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

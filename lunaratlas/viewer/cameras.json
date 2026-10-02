@@ -1,0 +1,44 @@
+{
+ "note": "Camera models and sensors for the equipment form: pixel size in µm, full resolution in px. A camera not here is entered by hand.",
+ "sensors": {
+  "IMX678": [2.0, 3840, 2160], "IMX585": [2.9, 3840, 2160], "IMX485": [2.9, 3840, 2160], "IMX715": [1.45, 3840, 2160],
+  "IMX462": [2.9, 1920, 1080], "IMX290": [2.9, 1920, 1080], "IMX662": [2.9, 1920, 1080], "IMX385": [3.75, 1936, 1096],
+  "IMX482": [5.8, 1920, 1080], "IMX664": [2.9, 2712, 1538], "IMX464": [2.9, 2712, 1538], "IMX224": [3.75, 1304, 976],
+  "IMX174": [5.86, 1936, 1216], "IMX183": [2.4, 5496, 3672], "IMX178": [2.4, 3096, 2080], "IMX432": [9.0, 1608, 1104],
+  "IMX287": [6.9, 720, 540], "IMX533": [3.76, 3008, 3008], "IMX571": [3.76, 6248, 4176], "IMX294": [4.63, 4144, 2822],
+  "IMX455": [3.76, 9576, 6388], "IMX410": [5.94, 6072, 4044], "AR0130": [3.75, 1280, 960]
+ },
+ "planetary": [
+  ["ZWO", "ASI678MC", "IMX678"], ["ZWO", "ASI678MM", "IMX678"], ["ZWO", "ASI585MC", "IMX585"], ["ZWO", "ASI585MM Pro", "IMX585"],
+  ["ZWO", "ASI715MC", "IMX715"], ["ZWO", "ASI462MC", "IMX462"], ["ZWO", "ASI462MM", "IMX462"], ["ZWO", "ASI662MC", "IMX662"],
+  ["ZWO", "ASI664MC", "IMX664"], ["ZWO", "ASI290MC", "IMX290"], ["ZWO", "ASI290MM", "IMX290"], ["ZWO", "ASI385MC", "IMX385"],
+  ["ZWO", "ASI482MC", "IMX482"], ["ZWO", "ASI485MC", "IMX485"], ["ZWO", "ASI224MC", "IMX224"], ["ZWO", "ASI174MM", "IMX174"],
+  ["ZWO", "ASI174MC", "IMX174"], ["ZWO", "ASI178MM", "IMX178"], ["ZWO", "ASI178MC", "IMX178"], ["ZWO", "ASI183MM Pro", "IMX183"],
+  ["ZWO", "ASI183MC Pro", "IMX183"], ["ZWO", "ASI432MM", "IMX432"], ["ZWO", "ASI120MM Mini", "AR0130"], ["ZWO", "ASI120MC-S", "AR0130"],
+  ["ZWO", "ASI533MC Pro", "IMX533"], ["ZWO", "ASI533MM Pro", "IMX533"], ["ZWO", "ASI2600MC Pro", "IMX571"],
+  ["ZWO", "ASI2600MM Pro", "IMX571"], ["ZWO", "ASI294MC Pro", "IMX294"], ["ZWO", "ASI6200MM Pro", "IMX455"],
+  ["Player One", "Uranus-C", "IMX585"], ["Player One", "Uranus-C Pro", "IMX585"], ["Player One", "Mars-C", "IMX462"],
+  ["Player One", "Mars-C II", "IMX662"], ["Player One", "Neptune-C II", "IMX464"], ["Player One", "Ceres-C", "IMX224"],
+  ["Player One", "Ares-C Pro", "IMX533"], ["Player One", "Poseidon-C Pro", "IMX571"],
+  ["QHY", "QHY5III678C", "IMX678"], ["QHY", "QHY5III678M", "IMX678"], ["QHY", "QHY5III585C", "IMX585"],
+  ["QHY", "QHY5III462C", "IMX462"], ["QHY", "QHY5III290C", "IMX290"], ["QHY", "QHY5III290M", "IMX290"],
+  ["QHY", "QHY5III174M", "IMX174"], ["QHY", "QHY5III224C", "IMX224"], ["QHY", "QHY5III178C", "IMX178"],
+  ["QHY", "QHY183M", "IMX183"], ["QHY", "QHY268C", "IMX571"], ["QHY", "QHY268M", "IMX571"], ["QHY", "QHY533C", "IMX533"],
+  ["QHY", "QHY294C Pro", "IMX294"], ["QHY", "QHY600M", "IMX455"],
+  ["Svbony", "SV705C", "IMX585"], ["Svbony", "SV605CC", "IMX533"], ["Svbony", "SV405CC", "IMX294"], ["Svbony", "SV305", "IMX290"],
+  ["Touptek", "G3M678C", "IMX678"], ["Touptek", "ATR585C", "IMX585"]
+ ],
+ "dslr": [
+  ["Canon", "EOS R5", 4.39, 8192, 5464], ["Canon", "EOS R6", 6.56, 5472, 3648], ["Canon", "EOS R", 5.36, 6720, 4480],
+  ["Canon", "EOS Ra", 5.36, 6720, 4480], ["Canon", "EOS RP", 5.75, 6240, 4160], ["Canon", "EOS 5D Mark IV", 5.36, 6720, 4480],
+  ["Canon", "EOS 6D", 6.54, 5472, 3648], ["Canon", "EOS 6D Mark II", 5.67, 6240, 4160], ["Canon", "EOS 90D", 3.2, 6960, 4640],
+  ["Canon", "EOS 2000D / Rebel T7", 3.72, 6000, 4000], ["Canon", "EOS 250D / Rebel SL3", 3.72, 6000, 4000],
+  ["Canon", "EOS 600D / Rebel T3i", 4.3, 5184, 3456],
+  ["Nikon", "Z6 / Z6 II", 5.95, 6048, 4024], ["Nikon", "Z5", 5.95, 6016, 4016], ["Nikon", "Z7 / Z7 II", 4.35, 8256, 5504],
+  ["Nikon", "D850", 4.35, 8256, 5504], ["Nikon", "D810", 4.88, 7360, 4912], ["Nikon", "D750", 5.95, 6016, 4016],
+  ["Nikon", "D5300", 3.89, 6000, 4000],
+  ["Sony", "α7 III", 5.93, 6000, 4000], ["Sony", "α7 IV", 5.12, 7008, 4672], ["Sony", "α7R IV", 3.76, 9504, 6336],
+  ["Sony", "α7S III", 8.4, 4240, 2832], ["Sony", "α6400", 3.92, 6000, 4000], ["Sony", "α6000", 3.92, 6000, 4000],
+  ["Fujifilm", "X-T4", 3.76, 6240, 4160]
+ ]
+}

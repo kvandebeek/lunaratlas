@@ -78,8 +78,8 @@ python3 tool_settings.py --check      # value in effect for every setting, with 
 python3 tool_settings.py --example    # regenerate .env.example
 ```
 
-Set your observing site before locating close-ups: it is used for the parallax, worth up to 1 degree of
-libration.
+The equipment and the observing site are set in the app (Settings, or the short form at the first close-up) and kept
+in `equipment.json`; the CLI uses them too. The site is used for the parallax, worth up to 1 degree of libration.
 
 Precedence: command-line option > environment variable > `.env` > built-in default.
 

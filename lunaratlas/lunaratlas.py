@@ -74,10 +74,12 @@ def quality_gate(image):
     return ok, reasons, line, q
 
 
-def geometry(image, relocate=False, force=False, gate=True, when=None):
+def geometry(image, relocate=False, force=False, gate=True, when=None, setup=None, any_scale=False, ask=False):
     """The image's positioning, located (and saved) when needed. With gate, an image the quality gate refuses is
     not annotated unless force; find and info pass gate=False and only report the verdict. when: the capture time
-    (UTC datetime) for a file whose name does not carry one; it is kept in the sidecar."""
+    (UTC datetime) for a file whose name does not carry one; it is kept in the sidecar. For a close-up: setup, the id
+    of the setup it was taken with (atlas_equipment); any_scale, search every scale; ask (the app): with neither and
+    no equipment at all, stop with atlas_equipment.NEED instead of searching, so the page can ask what took it."""
     geo, d = (None, None) if relocate else load_geo(image)
     if geo is not None:
         log(f'positioning from {os.path.basename(resolve_sidecar(image)[0])}')
@@ -115,9 +117,18 @@ def geometry(image, relocate=False, force=False, gate=True, when=None):
             hint = f' The quality gate found: {"; ".join(reasons)}.' if reasons else ''
             raise SystemExit(f'{e}; a close-up needs its capture time: in the name (SharpCap YYYY-MM-DD-HHMM_T-…) '
                              f'or with --time YYYY-MM-DDTHH:MM (UTC).{hint}') from None
+        import atlas_equipment as eq
+        optics = None
+        if setup:
+            optics = eq.find(setup)
+            if optics is None:
+                raise SystemExit(f'no setup {setup} in the equipment (Settings)')
+            optics['text'] = eq.text(optics)
+        elif ask and not any_scale and not eq.setups():
+            raise SystemExit(f'{eq.NEED}: {e}, and no telescope or camera is known yet')
         log(f'{e}: searching the image as a close-up')
         try:
-            geo, q = locate_closeup(image, log, when=when)
+            geo, q = locate_closeup(image, log, optics=optics, when=when, any_scale=any_scale)
         except SystemExit as e2:
             hint = f' The quality gate found: {"; ".join(reasons)}.' if reasons else ''
             raise SystemExit(f'{e2}{hint}') from None
@@ -138,7 +149,14 @@ def project(feats, geo):
 
 
 def optics_text(image):
-    """The folder's optics (lunaratlas_optics.json, written by the optics prompt or the close-up search) as one line."""
+    """The optics as one line: the setup this image was found with (its sidecar), else the folder's
+    lunaratlas_optics.json (written by the close-up search)."""
+    try:
+        q = (load_geo(image)[1] or {}).get('quality') or {}
+        if isinstance(q, dict) and isinstance(q.get('optics'), str) and q['optics']:
+            return q['optics']
+    except Exception:                          # noqa: BLE001  (a damaged sidecar: the folder's line, as before)
+        pass
     for d in (os.path.dirname(os.path.abspath(image)),):
         p = os.path.join(d, 'lunaratlas_optics.json')
         try:
@@ -209,7 +227,8 @@ def find_feature(feats, name):
 
 # ---------------------------------------------------------------- commands
 def cmd_locate(a):
-    geometry(a.image, relocate=True, force=a.force, when=when_of(a))
+    geometry(a.image, relocate=True, force=a.force, when=when_of(a), setup=a.setup, any_scale=a.any_scale,
+             ask=a.ask_equipment)
 
 
 def cmd_info(a):
@@ -758,6 +777,9 @@ def main(argv=None):
     s.add_argument('image')
     s.add_argument('--force', action='store_true', help='locate and annotate even if the quality gate refuses the image')
     s.add_argument('--time', metavar='UTC', help='capture time YYYY-MM-DDTHH:MM (UTC) for a close-up whose name has none')
+    s.add_argument('--setup', metavar='ID', help='a close-up: the setup it was taken with (an id from the equipment)')
+    s.add_argument('--any-scale', action='store_true', help='a close-up: search every scale, not the known optics')
+    s.add_argument('--ask-equipment', action='store_true', help=argparse.SUPPRESS)      # the app: stop and ask
     s.set_defaults(fn=cmd_locate)
     s = sub.add_parser('info', help='show the saved positioning')
     s.add_argument('image'); s.set_defaults(fn=cmd_info)

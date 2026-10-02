@@ -70,6 +70,20 @@ if not os.environ.get('_LUNARATLAS_TEST_HOME'):                # set once, even 
     os.environ['XDG_CACHE_HOME'] = os.path.join(_test_home, '.cache')
     os.environ['XDG_DATA_HOME'] = os.path.join(_test_home, '.local', 'share')
     atexit.register(shutil.rmtree, _test_home, True)
+    # the equipment the close-up tests were written for (a 250 PDS, three extenders, three cameras, 1×1 and 2×2), in
+    # a file of the test run's own: a CLI subprocess inherits LUNARATLAS_EQUIPMENT, so it searches the same setups.
+    # A test of the no-equipment case points LUNARATLAS_EQUIPMENT at a file that does not exist.
+    os.environ['LUNARATLAS_EQUIPMENT'] = os.path.join(_test_home, 'equipment.json')
+    with open(os.environ['LUNARATLAS_EQUIPMENT'], 'w', encoding='utf-8') as _fh:
+        json.dump(dict(v=1, telescopes=[dict(id='t1', name='250 PDS', focal_mm=1200)],
+                       barlows=[dict(id='b1', name='ES Focal Extender', factor=2),
+                                dict(id='b2', name='TV Powermate', factor=2.5),
+                                dict(id='b3', name='ES Focal Extender', factor=3)],
+                       cameras=[dict(id='c1', name='IMX678', pixel_um=2.0, binnings=[1, 2]),
+                                dict(id='c2', name='IMX533', pixel_um=3.76, binnings=[1, 2]),
+                                dict(id='c3', name='IMX462', pixel_um=2.9, binnings=[1, 2])],
+                       site=None, unused=[], recent=[]), _fh)
+TEST_EQUIPMENT = os.environ['LUNARATLAS_EQUIPMENT']
 
 import tool_settings as ts  # noqa: E402
 

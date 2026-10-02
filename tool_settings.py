@@ -33,22 +33,6 @@ def S(key, kind, default, help, lo=None, hi=None, choices=None, lo_open=False, h
 
 LAYER_NAMES = ('area', 'crater', 'lettered', 'relief', 'landing')
 SPECS = [
-    ('Observing site (only the parallax of the lunar ephemeris: up to 1° of libration)', [
-        S('LUNARATLAS_OBSERVER_NAME', 'str', 'Belgium', 'a name for the site (shown nowhere yet)'),
-        S('LUNARATLAS_OBSERVER_LAT', 'float', 50.9, 'latitude, ° north', -90, 90),
-        S('LUNARATLAS_OBSERVER_LON', 'float', 4.4, 'longitude, ° east', -180, 180),
-        S('LUNARATLAS_OBSERVER_HEIGHT_M', 'float', 50.0, 'height above sea level, m', -500, 9000),
-    ]),
-    ('Equipment (close-up search and the optics prompt)', [
-        S('LUNARATLAS_TELESCOPE', 'str', '250 PDS', 'telescope name, used in the info block'),
-        S('LUNARATLAS_FOCAL_MM', 'float', 1200.0, 'native focal length, mm', 50, 30000),
-        S('LUNARATLAS_EXTENDERS', 'pairs', 'native:1, 2× ES Focal Extender:2, 2.5× TV Powermate:2.5, 3× ES Focal Extender:3',
-          'focal extenders as name:factor, comma-separated; factor per entry', 0.2, 10),
-        S('LUNARATLAS_CAMERAS', 'pairs', 'IMX678:2.0, IMX533:3.76, IMX462:2.9',
-          'cameras as name:pixel size in µm, comma-separated; µm per entry', 0.5, 30),
-        S('LUNARATLAS_BINNINGS', 'pairs', '1×1:1, 2×2:2',
-          'camera binning modes as name:factor, comma-separated; factor per entry', 1, 8),
-    ]),
     ('lunaratlas export (labelled images)', [
         S('LUNARATLAS_FORMAT', 'choice', 'tiff', 'output format when -o does not decide it', choices=('tiff', 'png', 'jpg')),
         S('LUNARATLAS_MAX_SIZE', 'int', 0, 'longest output side in px (never upscaled); 0 = 1:1', 0, 100000),
@@ -149,6 +133,12 @@ NOT_SETTINGS = frozenset((
     'LUNARATLAS_ALLOW_GPL_CODECS',                                                             # packaging/build.py
     'LUNARATLAS_PERF_FACTOR', 'LUNARATLAS_SLOW_TESTS', 'LUNARATLAS_UI_OUT', 'LUNARATLAS_BROWSER',   # the test suite
     'LUNARATLAS_CHROME', 'LUNARATLAS_EDGE', 'LUNARATLAS_WEBDRIVER', 'LUNARATLAS_JS_COVERAGE',
+    'LUNARATLAS_EQUIPMENT',                                                                    # atlas_equipment
+))
+# settings that were here once and now live in equipment.json (the app's Settings): reported, never used
+MOVED = frozenset((
+    'LUNARATLAS_OBSERVER_NAME', 'LUNARATLAS_OBSERVER_LAT', 'LUNARATLAS_OBSERVER_LON', 'LUNARATLAS_OBSERVER_HEIGHT_M',
+    'LUNARATLAS_TELESCOPE', 'LUNARATLAS_FOCAL_MM', 'LUNARATLAS_EXTENDERS', 'LUNARATLAS_CAMERAS', 'LUNARATLAS_BINNINGS',
 ))
 _raw, _warned = None, set()
 
@@ -183,7 +173,10 @@ def _read():
         raw.update({k: (v, 'environment') for k, v in os.environ.items()
                     if k.startswith(PREFIXES) and k not in NOT_SETTINGS})
         for k, (v, where) in raw.items():
-            if k not in BY_KEY:
+            if k in MOVED:
+                _warn(k, f'{k} in {where} is no longer read: the equipment and the observing site are set in '
+                         f'LunarAtlas › Settings (equipment.json)')
+            elif k not in BY_KEY:
                 _warn(k, f'unknown setting {k} in {where} (a typo?); ignored')
         _raw = raw
     return _raw
@@ -242,28 +235,6 @@ def _convert(s, v):
         if bad or not items:
             raise ValueError(f"{', '.join(bad) or 'empty'}: {range_text(s)}")
         return items
-    if k == 'pairs':
-        out = []
-        for part in v.split(','):
-            part = part.strip()
-            if not part:                         # a trailing or doubled comma, as the list parser also ignores
-                continue
-            name, _, val = part.rpartition(':')
-            name = name.strip()
-            if not name:
-                raise ValueError(f'{part!r}: expected NAME:VALUE')
-            try:
-                x = float(val)
-            except ValueError:
-                raise ValueError(f'{name}: {val.strip()!r} is not a number')
-            if not math.isfinite(x):
-                raise ValueError(f'{name}: not a finite number')
-            if not _in_range(s, x):
-                raise ValueError(f'{name}: {x:g} outside {range_text(s)}')
-            out.append((name, x))
-        if not out:
-            raise ValueError('empty')
-        return out
     return v
 
 
@@ -280,8 +251,6 @@ def get(key, default=None, kind=None):
         except ValueError:
             return default
     base = s['default']
-    if s['kind'] == 'pairs' and isinstance(base, str):
-        base = _convert(s, base)
     if s['kind'] == 'list' and isinstance(base, str):
         base = _convert(s, base)
     if raw is None or (raw[0] == '' and s['kind'] != 'str'):
@@ -291,11 +260,6 @@ def get(key, default=None, kind=None):
     except (ValueError, TypeError) as e:
         _warn(key, f'{key}={raw[0]!r} in {raw[1]}: {e}; using the default {s["default"]!r}')
         return base
-
-
-def pairs(key, default=None):
-    v = get(key)
-    return v if v else default
 
 
 def example():

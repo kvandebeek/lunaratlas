@@ -4,12 +4,14 @@ import math
 import os
 import threading
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 import _support as S
 import numpy as np
 
 import atlas_closeup as ac
+import atlas_equipment as eq
 import atlas_ephem as ae
 import atlas_geo as ag
 
@@ -438,7 +440,9 @@ class CloseupOptics(S.TempDir, unittest.TestCase):
         self.assertEqual(ac.drizzle_factor('plain.tif'), 1.0)
 
     def test_setups_cover_every_extender_camera_and_binning(self):
-        self.assertEqual(len(ac.setups()), len(ac.EXTENDERS) * len(ac.CAMERAS) * len(ac.BINNINGS))
+        d = eq.load()                            # the test run's equipment (tests/_support.py)
+        self.assertEqual(len(ac.setups()), len(d['telescopes']) * (1 + len(d['barlows']))
+                         * sum(len(c['binnings']) for c in d['cameras']))
         binned = [s for s in ac.setups() if s['binning']]
         self.assertTrue(binned)
         s = binned[0]
@@ -449,16 +453,18 @@ class CloseupOptics(S.TempDir, unittest.TestCase):
         self.assertNotIn('binned', ac.optics_text(plain))
 
     def test_plate_scale(self):
-        s = dict(pixel_um=2.9, magnification=2.0)
-        self.assertAlmostEqual(ac.arcsec_per_px(s), 206.265 * 2.9 / (ac.TELESCOPE[1] * 2.0), places=12)
+        s = dict(pixel_um=2.9, focal_mm=2400.0)
+        self.assertAlmostEqual(ac.arcsec_per_px(s), 206.265 * 2.9 / 2400, places=12)
         self.assertAlmostEqual(ac.arcsec_per_px(s, 1.5), ac.arcsec_per_px(s) / 1.5, places=12)
 
     def test_km_candidates(self):
-        known = dict(extender='x', magnification=2.0, camera='c', pixel_um=2.9)
+        known = dict(extender='x', magnification=2.0, camera='c', pixel_um=2.9, focal_mm=2400.0)
         c = ac.km_candidates('a_Drizzle15.tif', known, 384400)
-        self.assertEqual(len(c), 3)                              # nominal ± 10 %
+        self.assertEqual(len(c), 5)                              # nominal ± 15 %
         base = ac.arcsec_per_px(known, 1.5) * 384400 * ac.KM_PER_ARCSEC_PER_KM
-        self.assertAlmostEqual(c[1][0], base, places=9)
+        self.assertAlmostEqual(c[2][0], base, places=9)
+        self.assertAlmostEqual(c[0][0] / base, 0.87, places=9)
+        self.assertAlmostEqual(c[-1][0] / base, 1.15, places=9)
 
     def test_unknown_optics_leave_no_gap_the_search_would_miss(self):
         kms = [km for km, _ in ac.km_candidates('a.tif', None, 384400)]
@@ -469,6 +475,18 @@ class CloseupOptics(S.TempDir, unittest.TestCase):
         for s in ac.setups():                    # every setup is within 5 % of a searched scale
             km = ac.arcsec_per_px(s) * 384400 * ac.KM_PER_ARCSEC_PER_KM
             self.assertLess(min(abs(math.log(k / km)) for k in kms), math.log(1.05) + 1e-9)
+        lo, hi = (a * 384400 * ac.KM_PER_ARCSEC_PER_KM for a in ac.BROAD_ARCSEC)
+        self.assertLessEqual(kms[0], lo * 1.05, 'the broad range is searched too')
+        self.assertGreaterEqual(kms[-1], hi / 1.05)
+
+    def test_no_equipment_searches_the_broad_range_alone(self):
+        with mock.patch.dict(os.environ, LUNARATLAS_EQUIPMENT=os.path.join(self.tmp, 'none.json')):
+            self.assertEqual(ac.setups(), [])
+            kms = [km for km, _ in ac.km_candidates('a.tif', None, 384400)]
+        lo, hi = (a * 384400 * ac.KM_PER_ARCSEC_PER_KM for a in ac.BROAD_ARCSEC)
+        self.assertAlmostEqual(kms[0], lo, places=9)
+        self.assertAlmostEqual(kms[-1], hi, places=9)
+        self.assertLessEqual(max(b / a for a, b in zip(kms, kms[1:])), ac.MAX_SCALE_STEP + 1e-9)
 
     def test_every_scale_keeps_its_best_place(self):
         # a small view's chance peak must not crowd out another scale's (lower scoring) true place
@@ -480,16 +498,16 @@ class CloseupOptics(S.TempDir, unittest.TestCase):
     def test_optics_file(self):
         self.assertIsNone(ac.load_optics(self.tmp))
         with open(os.path.join(self.tmp, ac.OPTICS_FILE), 'w') as fh:
-            json.dump(dict(magnification=2, pixel_um=2.9, text='t'), fh)
+            json.dump(dict(magnification=2, pixel_um=2.9, focal_mm=2400, text='t'), fh)
         self.assertEqual(ac.load_optics(self.tmp)['text'], 't')
         self.assertEqual(ac.ask_optics(self.tmp, S.quiet)['text'], 't')
 
     def test_an_optics_file_from_before_the_rename_is_still_read(self):
         with open(os.path.join(self.tmp, 'moon_atlas_optics.json'), 'w') as fh:
-            json.dump(dict(magnification=2, pixel_um=2.9, text='old'), fh)
+            json.dump(dict(magnification=2, pixel_um=2.9, focal_mm=2400, text='old'), fh)
         self.assertEqual(ac.load_optics(self.tmp)['text'], 'old')
         with open(os.path.join(self.tmp, ac.OPTICS_FILE), 'w') as fh:
-            json.dump(dict(magnification=1, pixel_um=2.0, text='new'), fh)
+            json.dump(dict(magnification=1, pixel_um=2.0, focal_mm=1200, text='new'), fh)
         self.assertEqual(ac.load_optics(self.tmp)['text'], 'new')        # the current name wins
 
     def test_normalise_removes_brightness(self):

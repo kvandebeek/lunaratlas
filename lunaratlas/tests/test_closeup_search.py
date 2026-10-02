@@ -14,7 +14,7 @@ import atlas_geo as ag
 from atlas_ephem import ephemeris
 
 W, H = 1600, 1200
-SETUP = dict(extender='native', magnification=1.0, camera='IMX678', pixel_um=2.0)
+SETUP = dict(telescope='250 PDS', extender='native', magnification=1.0, focal_mm=1200.0, camera='IMX678', pixel_um=2.0)
 
 
 class Distinct(unittest.TestCase):
@@ -109,9 +109,10 @@ class Choice(S.TempDir):
 
     def test_a_frame_not_at_the_folders_scale_is_searched_at_every_setup(self):
         folder_optics = dict(SETUP, text='the folder setup')
-        geo, q, log = self.locate(lambda kms: [(5, 1.0)] if len(kms) == 3 else [(200, 0.8)], folder_optics)
+        known = len(ac.KNOWN_SPREAD)
+        geo, q, log = self.locate(lambda kms: [(5, 1.0)] if len(kms) == known else [(200, 0.8)], folder_optics)
         self.assertEqual(q['matches'], 200)
-        self.assertIn('trying every setup', log)
+        self.assertIn('trying every scale', log)
         self.assertEqual(ac.load_optics(self.tmp), folder_optics, "the folder's optics file is left as it was")
 
 
@@ -156,7 +157,7 @@ class RenamedCloseUp(S.TempDir):
         name = os.path.join(self.tmp, 'renamed.tif')
         cv2.imwrite(name, np.clip(gray, 0, 65535).astype(np.uint16))
         with open(os.path.join(self.tmp, ac.OPTICS_FILE), 'w') as fh:
-            json.dump(dict(SETUP, telescope=ac.TELESCOPE[0], focal_mm=ac.TELESCOPE[1], text='test optics'), fh)
+            json.dump(dict(SETUP, text='test optics'), fh)
         home = os.path.join(self.tmp, 'home')
         os.makedirs(home)
         r = S.run_cli('locate', name, home=home, timeout=S.budget(600))

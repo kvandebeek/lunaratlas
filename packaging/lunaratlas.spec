@@ -19,7 +19,7 @@ a = Analysis(
              for fam in sorted(os.listdir(os.path.join(SRC, 'fonts'))) if os.path.isdir(os.path.join(SRC, 'fonts', fam))
              for f in os.listdir(os.path.join(SRC, 'fonts', fam)) if f.endswith(('.ttf', '.txt'))],
     hiddenimports=['lunaratlas', 'atlas_app', 'atlas_view', 'atlas_closeup', 'atlas_ephem', 'atlas_geo', 'atlas_names',
-                   'atlas_quality', 'atlas_render', 'atlas_paths', 'tool_settings', 'certifi'],
+                   'atlas_quality', 'atlas_render', 'atlas_paths', 'atlas_equipment', 'tool_settings', 'certifi'],
     excludes=['tkinter', 'matplotlib', 'scipy', 'pandas', 'IPython', 'pytest', 'unittest.mock'],
     noarchive=False,
 )

@@ -664,39 +664,45 @@ class Settings(S.TempDir, unittest.TestCase):
         return err.getvalue()
 
     def test_every_kind(self):
-        err = self.env_file('# comment\nLUNARATLAS_FOCAL_MM = 1500  # a comment\nLUNARATLAS_NIGHT="dim"\n'
-                            "LUNARATLAS_TELESCOPE='C11'\nLUNARATLAS_RIMS=no\nLUNARATLAS_GRID=On\nLUNARATLAS_MAX_SIZE=4096\n"
-                            'LUNARATLAS_LAYERS=crater, area\nLUNARATLAS_CAMERAS=IMX585:2.9, ASI 120:3.75\n')
+        err = self.env_file('# comment\nLUNARATLAS_MIN_SIZE = 150  # a comment\nLUNARATLAS_NIGHT="dim"\n'
+                            "LUNARATLAS_FONT='Roboto'\nLUNARATLAS_RIMS=no\nLUNARATLAS_GRID=On\nLUNARATLAS_MAX_SIZE=4096\n"
+                            'LUNARATLAS_LAYERS=crater, area\n')
         self.assertEqual(err, '')
-        self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 1500.0)
+        self.assertEqual(ts.get('LUNARATLAS_MIN_SIZE'), 150.0)
         self.assertEqual(ts.get('LUNARATLAS_NIGHT'), 'dim')
-        self.assertEqual(ts.get('LUNARATLAS_TELESCOPE'), 'C11')
+        self.assertEqual(ts.get('LUNARATLAS_FONT'), 'Roboto')
         self.assertIs(ts.get('LUNARATLAS_RIMS'), False)
         self.assertIs(ts.get('LUNARATLAS_GRID'), True)
         self.assertEqual(ts.get('LUNARATLAS_MAX_SIZE'), 4096)
         self.assertEqual(ts.get('LUNARATLAS_LAYERS'), ['crater', 'area'])
-        self.assertEqual(ts.get('LUNARATLAS_CAMERAS'), [('IMX585', 2.9), ('ASI 120', 3.75)])
         self.assertEqual(ts.get('LUNARATLAS_JPEG_QUALITY'), 92)                  # not set: the default
 
     def test_environment_wins_over_the_file(self):
-        self.env_file('LUNARATLAS_FOCAL_MM=1500\n', LUNARATLAS_FOCAL_MM='2400')
-        self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 2400.0)
+        self.env_file('LUNARATLAS_MIN_SIZE=150\n', LUNARATLAS_MIN_SIZE='240')
+        self.assertEqual(ts.get('LUNARATLAS_MIN_SIZE'), 240.0)
 
     def test_out_of_range_and_typos_fall_back_with_one_warning(self):
-        err = self.env_file('LUNARATLAS_FOCAL_MM=10\nLUNARATLAS_NIGHT=never\nLUNARATLAS_FOCUS=1\nLUNARATLAS_JPEG_QUALITY=9.5\n'
-                            'LUNARATLAS_CAMERAS=IMX678\nLUNAR_FINISH_HIGHLIGHTS=0.5\nLUNARATLAS_LAYERS=\n')
+        err = self.env_file('LUNARATLAS_MIN_SIZE=2\nLUNARATLAS_NIGHT=never\nLUNARATLAS_FOCUS=1\nLUNARATLAS_JPEG_QUALITY=9.5\n'
+                            'LUNAR_FINISH_HIGHLIGHTS=0.5\nLUNARATLAS_LAYERS=\n')
         self.assertIn('unknown setting LUNARATLAS_FOCUS', err)
         e2 = io.StringIO()
         with redirect_stderr(e2):
             for _ in range(3):
-                self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 1200.0)
+                self.assertEqual(ts.get('LUNARATLAS_MIN_SIZE'), 24.0)
             self.assertEqual(ts.get('LUNARATLAS_NIGHT'), 'dim')
             self.assertEqual(ts.get('LUNARATLAS_JPEG_QUALITY'), 92)
-            self.assertEqual(ts.get('LUNARATLAS_CAMERAS'), [('IMX678', 2.0), ('IMX533', 3.76), ('IMX462', 2.9)])
             self.assertEqual(ts.get('LUNAR_FINISH_HIGHLIGHTS'), 0.3)            # 0.5 is excluded (open interval)
             self.assertEqual(ts.get('LUNARATLAS_LAYERS'), list(ts.LAYER_NAMES))   # empty: the default
-        self.assertEqual(e2.getvalue().count('LUNARATLAS_FOCAL_MM'), 1)
-        self.assertIn('outside 50 – 30000', e2.getvalue())
+        self.assertEqual(e2.getvalue().count('LUNARATLAS_MIN_SIZE'), 1)
+        self.assertIn('outside 4 – 400', e2.getvalue())
+
+    def test_equipment_and_site_keys_say_where_they_went(self):
+        err = self.env_file('LUNARATLAS_OBSERVER_LAT=50.9\nLUNARATLAS_CAMERAS=IMX678:2.0\n')
+        for key in ('LUNARATLAS_OBSERVER_LAT', 'LUNARATLAS_CAMERAS'):
+            self.assertIn(f'{key} in .env is no longer read', err)
+        self.assertIn('Settings', err)
+        self.assertNotIn('unknown setting', err)
+        self.assertNotIn('LUNARATLAS_OBSERVER_LAT', ts.BY_KEY)
 
     def test_variables_the_tools_read_directly_are_not_reported_as_unknown(self):
         """claude-findings.md C-28: LUNARATLAS_DATA, _TOKEN, _SELFTEST and the rest of ts.NOT_SETTINGS are real,
@@ -711,63 +717,42 @@ class Settings(S.TempDir, unittest.TestCase):
     def test_nan_and_infinity_are_rejected_not_taken_as_in_range(self):
         """claude-findings.md C-15: math.isfinite comparisons with nan/inf are always False, so the plain lo/hi
         checks used to let both straight through as valid."""
-        self.env_file('LUNARATLAS_FOCAL_MM=nan\nLUNARATLAS_FONT_SCALE=inf\nLUNARATLAS_CAMERAS=IMX678:nan\n')
+        self.env_file('LUNARATLAS_MIN_SIZE=nan\nLUNARATLAS_FONT_SCALE=inf\n')
         err = io.StringIO()
         with redirect_stderr(err):
-            focal, fs, cams = ts.get('LUNARATLAS_FOCAL_MM'), ts.get('LUNARATLAS_FONT_SCALE'), ts.get('LUNARATLAS_CAMERAS')
-        for name in ('LUNARATLAS_FOCAL_MM', 'LUNARATLAS_FONT_SCALE', 'LUNARATLAS_CAMERAS'):
+            size, fs = ts.get('LUNARATLAS_MIN_SIZE'), ts.get('LUNARATLAS_FONT_SCALE')
+        for name in ('LUNARATLAS_MIN_SIZE', 'LUNARATLAS_FONT_SCALE'):
             self.assertIn(name, err.getvalue())
-        self.assertEqual(focal, 1200.0)
+        self.assertEqual(size, 24.0)
         self.assertEqual(fs, 1.0)
-        self.assertEqual(cams, [('IMX678', 2.0), ('IMX533', 3.76), ('IMX462', 2.9)])
 
     def test_windows_line_endings(self):
-        self.env_file(b'LUNARATLAS_FOCAL_MM=1500\r\nLUNARATLAS_NIGHT=dim\r\n')
-        self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 1500.0)
+        self.env_file(b'LUNARATLAS_MIN_SIZE=150\r\nLUNARATLAS_NIGHT=dim\r\n')
+        self.assertEqual(ts.get('LUNARATLAS_MIN_SIZE'), 150.0)
         self.assertEqual(ts.get('LUNARATLAS_NIGHT'), 'dim')
 
     def test_utf8_bom(self):
         # a .env saved as "UTF-8 with BOM" (Windows PowerShell 5 `Out-File -Encoding utf8`, older Notepad) applies
         # every setting, the first one too
-        err = self.env_file(b'\xef\xbb\xbfLUNARATLAS_FOCAL_MM=1500\nLUNARATLAS_NIGHT=dim\n')
+        err = self.env_file(b'\xef\xbb\xbfLUNARATLAS_MIN_SIZE=150\nLUNARATLAS_NIGHT=dim\n')
         self.assertEqual(err, '')
-        self.assertEqual(ts.get('LUNARATLAS_FOCAL_MM'), 1500.0)
+        self.assertEqual(ts.get('LUNARATLAS_MIN_SIZE'), 150.0)
 
     def test_hash_starts_a_comment_except_inside_quotes(self):
         """BUG-20: the parser used to strip the comment before the quotes, so a telescope named "C#11 EdgeHD"
         arrived as "C". Quotes are read first now; an unquoted # still starts a comment."""
-        for text, want in (('LUNARATLAS_TELESCOPE="C#11 EdgeHD"', 'C#11 EdgeHD'),
-                           ("LUNARATLAS_TELESCOPE='C#11 EdgeHD'", 'C#11 EdgeHD'),
-                           ('LUNARATLAS_TELESCOPE="C#11 EdgeHD"  # the scope', 'C#11 EdgeHD'),
-                           ('LUNARATLAS_TELESCOPE=C11 # the scope', 'C11'),
-                           ('LUNARATLAS_TELESCOPE=C#11', 'C'),                   # unquoted: still a comment
-                           ('LUNARATLAS_TELESCOPE="C11', 'C11'),                 # unterminated: read as before
-                           ('# LUNARATLAS_TELESCOPE=C11', '250 PDS'),   # a commented-out line stays off
-                           ('# a comment that mentions key=value', '250 PDS')):
+        for text, want in (('LUNARATLAS_FONT="C#11 EdgeHD"', 'C#11 EdgeHD'),
+                           ("LUNARATLAS_FONT='C#11 EdgeHD'", 'C#11 EdgeHD'),
+                           ('LUNARATLAS_FONT="C#11 EdgeHD"  # the scope', 'C#11 EdgeHD'),
+                           ('LUNARATLAS_FONT=C11 # the scope', 'C11'),
+                           ('LUNARATLAS_FONT=C#11', 'C'),                   # unquoted: still a comment
+                           ('LUNARATLAS_FONT="C11', 'C11'),                 # unterminated: read as before
+                           ('# LUNARATLAS_FONT=C11', 'IBM Plex Sans'),   # a commented-out line stays off
+                           ('# a comment that mentions key=value', 'IBM Plex Sans')):
             with self.subTest(text):
                 err = self.env_file(text + '\n')
                 self.assertEqual(err, '', text)
-                self.assertEqual(ts.get('LUNARATLAS_TELESCOPE'), want)
-
-    def test_pairs_tolerates_a_trailing_comma(self):
-        """BUG-21: one empty item used to abort the whole setting with an unpacking error, so every camera was
-        lost; the list parser already skipped empty items."""
-        err = self.env_file('LUNARATLAS_CAMERAS=IMX678:2.0, IMX533:3.76,\n')
-        self.assertEqual(err, '')
-        self.assertEqual(ts.get('LUNARATLAS_CAMERAS'), [('IMX678', 2.0), ('IMX533', 3.76)])
-
-    def test_pairs_rejects_empty_and_malformed_entries_with_a_reason(self):
-        self.env_file('LUNARATLAS_CAMERAS= , ,\nLUNARATLAS_BINNINGS=IMX678\nLUNARATLAS_EXTENDERS=native:x\n')
-        err = io.StringIO()
-        with redirect_stderr(err):
-            cams, bins, ext = (ts.get('LUNARATLAS_CAMERAS'), ts.get('LUNARATLAS_BINNINGS'),
-                               ts.get('LUNARATLAS_EXTENDERS'))
-        self.assertEqual(cams, [('IMX678', 2.0), ('IMX533', 3.76), ('IMX462', 2.9)])   # all empty: still invalid
-        self.assertEqual(bins, [('1×1', 1.0), ('2×2', 2.0)])
-        self.assertEqual(ext[0], ('native', 1.0))
-        self.assertIn('empty', err.getvalue())
-        self.assertIn('expected NAME:VALUE', err.getvalue())
-        self.assertIn('is not a number', err.getvalue())
+                self.assertEqual(ts.get('LUNARATLAS_FONT'), want)
 
     def test_undeclared_keys(self):
         self.env_file('LUNARATLAS_BASELINE_DIR=/x\n')
@@ -777,7 +762,7 @@ class Settings(S.TempDir, unittest.TestCase):
         self.assertEqual(ts.range_text(ts.BY_KEY['LUNAR_FINISH_KNEE_PERCENTILE']), '0 (excl.) – 99.9 (excl.)')
         self.assertEqual(ts.range_text(ts.BY_KEY['LUNARATLAS_NIGHT']), 'one of hide | dim | show')
         self.assertEqual(ts.range_text(ts.BY_KEY['LUNARATLAS_RIMS']), '1 or 0')
-        self.assertEqual(ts.range_text(ts.BY_KEY['LUNARATLAS_TELESCOPE']), '')
+        self.assertEqual(ts.range_text(ts.BY_KEY['LUNARATLAS_FONT']), '')
 
     def test_defaults_are_valid(self):
         for key, s in ts.BY_KEY.items():
@@ -785,7 +770,7 @@ class Settings(S.TempDir, unittest.TestCase):
                 self.assertTrue(ts._in_range(s, s['default']), key)
             if s['kind'] == 'choice':
                 self.assertIn(s['default'], s['choices'], key)
-            if s['kind'] in ('pairs', 'list'):
+            if s['kind'] == 'list':
                 ts._convert(s, s['default'])
 
     def test_check_command(self):

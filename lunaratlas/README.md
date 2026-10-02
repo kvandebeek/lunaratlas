@@ -7,6 +7,7 @@ IAU feature names on your own lunar images, like LROC QuickMap but with your dat
 | `lunaratlas.py` | The CLI: `locate`, `export`, `batch`, `info`, `find`, `view`, `app`. |
 | `atlas_geo.py` | Positioning of full disks: limb fit, orientation candidates verified by terrain matching, perspective sphere model with a smooth correction, and sidecar I/O. |
 | `atlas_closeup.py` | Close-ups without a limb: optics, the lit LOLA relief reference, and the blind search. |
+| `atlas_equipment.py`, `viewer/settings.html`, `viewer/cameras.json` | The equipment and observing site (`equipment.json`), the Settings page and the camera list. |
 | `atlas_ephem.py` | Ephemeris (Meeus) from the SharpCap UTC time: libration, subsolar point, Earth–Moon distance. |
 | `atlas_quality.py` | The quality gate's measures and verdict; limits in `data/quality_thresholds.json`. |
 | `atlas_names.py` | IAU nomenclature (9087 features) and landing sites. |
@@ -51,9 +52,9 @@ The limits were calibrated on 80 labelled images (`calibrate.py`). They refuse e
 
 ## Close-ups without a limb
 
-The observing site (used for the parallax, up to 1° of libration) and the equipment are settings; see "Settings" below.
+The equipment (telescopes, barlows, cameras with their binnings) and the observing site live in `equipment.json` in the user's data folder (`LUNARATLAS_EQUIPMENT` names another file). The app writes it: the short form at the first close-up, and the Settings page. The CLI reads it too. Nothing is assumed when it is missing: no equipment means every scale is searched, and no site means a geocentric ephemeris (the parallax moves the libration by at most 1°). The old `.env` keys (`LUNARATLAS_TELESCOPE`, `_FOCAL_MM`, `_EXTENDERS`, `_CAMERAS`, `_BINNINGS`, `_OBSERVER_*`) are no longer read, and a warning says where they went.
 
-A close-up needs its capture time, taken from the SharpCap name `YYYY-MM-DD-HHMM_T-…` in UTC. A file that has been renamed can be given its time with `--time YYYY-MM-DDTHH:MM` (UTC) on `locate` (or on `export`, `view` and `find`, which locate a photo that has no positioning yet): the time is kept in the sidecar and used by every later step, the name's own time still comes first. For a mosaic, the middle of its panels' times from `mosaic_layout.json` is used. From the time, the ephemeris gives the lighting and the libration. The optics are asked once per folder when a terminal is attached, and stored in `lunaratlas_optics.json`. Otherwise all 24 setups of the 250 PDS are tried: native, 2× ES, 2.5× TV Powermate or 3× ES, with the IMX678, IMX533 or IMX462, unbinned or 2×2 binned (`LUNARATLAS_BINNINGS`). Their scales are merged where they are within 5 % of each other and filled in where they are more than 10 % apart, because a place whose scale is 10 % off is lost. The setup that fits is then recognised and saved for the folder. When a frame is not found at the folder's saved scale (for example one taken binned, or with another extender, on the same night), every setup is tried before it is refused, and the folder's file is left as it is.
+A close-up needs its capture time, taken from the SharpCap name `YYYY-MM-DD-HHMM_T-…` in UTC. A file that has been renamed can be given its time with `--time YYYY-MM-DDTHH:MM` (UTC) on `locate` (or on `export`, `view` and `find`, which locate a photo that has no positioning yet): the time is kept in the sidecar and used by every later step, the name's own time still comes first. For a mosaic, the middle of its panels' times from `mosaic_layout.json` is used. From the time, the ephemeris gives the lighting and the libration. The scale comes from the setup it was taken with: `--setup ID` (an id from the equipment, as `t1/b1/c1/1`: telescope, barlow or `native`, camera, binning), else the folder's `lunaratlas_optics.json`. A known setup is searched at ±15 %, because a barlow's real factor depends on its distance to the camera. With neither, or `--any-scale`, every scale is searched: each of the user's setups plus 0.1–2″/px, merged where they are within 5 % of each other and filled in where they are more than 10 % apart, because a place whose scale is 10 % off is lost. The setup that fits is then recognised and saved for the folder. When a frame is not found at the given scale (for example one taken binned, or with another barlow, on the same night), every scale is tried before it is refused, and the folder's file is left as it is. `--ask-equipment` (what the app passes) stops a close-up with no equipment at all, so the page can ask what took it instead of searching blind.
 
 The search works in four steps:
 1. The image is reduced to 4.8 km/px and turned in 4° steps, mirrored and not.
@@ -68,9 +69,9 @@ Measured on 5 of the user's close-ups and one close-up mosaic: all found correct
 ## Settings
 
 Per-machine settings live in `.env` in the repository root, which is not committed; `.env.example` lists every key with its default. The same file serves lunaratlas, lunar_finish and mosaic_builder.
-- **lunaratlas:** observing site, equipment (telescope, focal length, extenders, cameras), export defaults (font, detail level, label size, night side, JPEG quality) and the viewer port.
+- **lunaratlas:** export defaults (font, detail level, label size, night side, JPEG quality) and the viewer port. The equipment and the observing site are not here: see "Close-ups without a limb".
 
-Command-line options override `.env`; environment variables of the same name override the file; `--help` shows the value in effect. All 61 settings are declared once in `tool_settings.py`, with their type, default and range. A `.env` saved by Windows as UTF-8 with a byte-order mark is read correctly. `.env.example` is generated from there (`python3 tool_settings.py --example`), so its documented ranges are the enforced ones. `python3 tool_settings.py --check` shows the value in effect for every setting and reports out-of-range values and unknown keys, which fall back to the default. On/off settings have both forms on the command line, for example `--rims` / `--no-rims`.
+Command-line options override `.env`; environment variables of the same name override the file; `--help` shows the value in effect. All 52 settings are declared once in `tool_settings.py`, with their type, default and range. A `.env` saved by Windows as UTF-8 with a byte-order mark is read correctly. `.env.example` is generated from there (`python3 tool_settings.py --example`), so its documented ranges are the enforced ones. `python3 tool_settings.py --check` shows the value in effect for every setting and reports out-of-range values and unknown keys, which fall back to the default. On/off settings have both forms on the command line, for example `--rims` / `--no-rims`.
 
 ## Export
 
@@ -145,8 +146,12 @@ image", goes back.
 - **Capture time:** when the name has no SharpCap/WinJUPOS time, the page asks for it (local time; optional for full
   disks, needed for close-ups) and puts it in front of the copy's name, so every later step finds it.
 - **Refused photos:** a quality-gate refusal shows its reasons and an "Annotate anyway" button (`--force`).
-- **Close-up optics** are not asked (no terminal): all setups are tried, which is slower. A
-  `lunaratlas_optics.json` in the work folder is used when present.
+- **Equipment:** the first close-up with no equipment known stops and asks what took it: telescope (name, focal
+  length), barlow and camera (searched by model or sensor in `viewer/cameras.json`, or a name and pixel size). Full
+  disks never ask. Later photos get a "Taken with" choice, set to the last setup; "Not sure" searches every scale.
+  When a close-up is not found, the page offers "Try every scale" and "It was another setup…". Settings (`/settings`)
+  edits the telescopes, barlows, cameras, the observing site ("Use my location" rounds to 0.1°; it is never sent
+  anywhere or written into an export) and which setups are in use.
 - **Window or browser:** with [pywebview](https://pywebview.flowrl.com) installed the page gets an app window of its
   own (WebKit on macOS, Edge WebView2 on Windows) and closing it stops the launcher, including a locate or export
   that is still running. Without it (or with `--no-window`) the browser is used; `--idle-exit SECONDS` then stops the

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LunarAtlas settings</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/fonts.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+* { box-sizing: border-box; }
+html { background: var(--bg-0); }
+body { margin: 0; min-height: 100vh; color: var(--text); font: 15px/1.5 var(--font-ui); -webkit-font-smoothing: antialiased; background: var(--bg-0); }
+main { max-width: 920px; margin: 0 auto; padding: 32px 20px 96px; }
+[hidden] { display: none !important; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+header h1 { margin: 0; font-size: 28px; font-weight: 600; }
+.lead { color: var(--text-2); margin: 0 0 24px; }
+.card { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-l); padding: 20px 22px; margin-bottom: 18px; }
+.card h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--text-2); }
+.card > p { margin: 0 0 14px; color: var(--text-3); font-size: 13.5px; }
+input, select { font: inherit; background: var(--bg-0); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px;
+  padding: 6px 10px; color-scheme: dark; min-width: 0; }
+input:focus-visible { outline: none; box-shadow: var(--focus); }
+input:invalid { border-color: var(--danger); }
+.rows { display: grid; gap: 8px; }
+.row { display: grid; gap: 10px; align-items: center; }
+.t .row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 36px; }
+.b .row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 36px; }
+.c .row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, .8fr) 200px 36px; }
+.head { color: var(--text-3); font-size: 12.5px; }
+.x { width: 36px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); font-size: 20px; cursor: pointer; }
+.x:hover { background: var(--danger-soft); color: var(--danger); }
+.x:focus-visible { outline: none; box-shadow: var(--focus); }
+.bins { display: flex; gap: 8px; font-size: 13px; color: var(--text-2); }
+.bins label { display: flex; gap: 3px; align-items: center; }
+.add { margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.combo { position: relative; flex: 1; min-width: 240px; }
+.combo input { width: 100%; }
+ul.list { position: absolute; z-index: 2; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px 0; list-style: none; max-height: 280px;
+  overflow: auto; background: var(--bg-0); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow); }
+ul.list .grp { padding: 8px 12px 2px; font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); }
+ul.list .opt { display: flex; justify-content: space-between; gap: 10px; padding: 7px 12px; font-size: 14px; cursor: pointer; }
+ul.list .opt small { color: var(--text-3); }
+ul.list .opt.hl, ul.list .opt:hover { background: var(--bg-3); }
+ul.list .own { color: var(--accent); border-top: 1px solid var(--line); }
+.site { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.site label { display: grid; gap: 4px; color: var(--text-3); font-size: 12.5px; }
+.privacy { margin-top: 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--grid-line); color: var(--text-2); font-size: 13.5px; }
+.privacy b { color: var(--text); font-weight: 500; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-weight: 500; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3);
+  padding: 6px 8px; border-bottom: 1px solid var(--line-strong); }
+td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr.off td { color: var(--text-disabled); }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+.tag.cu { background: var(--accent-soft); color: var(--accent-hover); }
+.tag.fd { background: rgba(143, 216, 236, .14); color: var(--grid); }
+.tablewrap { overflow-x: auto; }
+.bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); backdrop-filter: blur(8px); border-top: 1px solid var(--line); }
+.bar div { max-width: 920px; margin: 0 auto; padding: 12px 20px; display: flex; gap: 14px; align-items: center; justify-content: flex-end; }
+.bar .msg { margin-right: auto; color: var(--text-2); font-size: 14px; }
+.bar .msg.bad { color: var(--danger); }
+.empty { color: var(--text-3); font-size: 14px; }
+@media (max-width: 640px) {
+  .t .row, .b .row, .c .row { grid-template-columns: 1fr 1fr; }
+  .head { display: none !important; }
+  .site { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Settings</h1><a class="btn" href="/app">Back to LunarAtlas</a></header>
+  <p class="lead">Your equipment and observing site, kept in equipment.json on this computer. The command line uses them too.</p>
+
+  <section class="card t" aria-labelledby="h-t">
+    <h2 id="h-t">Telescopes</h2>
+    <p>The native focal length, without a barlow.</p>
+    <div class="rows" id="telescopes"></div>
+    <div class="add"><button class="btn" id="addt">+ Add a telescope</button></div>
+  </section>
+
+  <section class="card b" aria-labelledby="h-b">
+    <h2 id="h-b">Barlows and focal extenders</h2>
+    <p>Shared by all telescopes; imaging without one is always included. A barlow's real factor depends on its distance to
+      the camera: LunarAtlas searches 15 % either side.</p>
+    <div class="rows" id="barlows"></div>
+    <div class="add"><button class="btn" id="addb">+ Add a barlow</button></div>
+  </section>
+
+  <section class="card c" aria-labelledby="h-c">
+    <h2 id="h-c">Cameras</h2>
+    <p>Search by model or sensor; a camera that is not listed needs only its pixel size.</p>
+    <div class="rows" id="cameras"></div>
+    <div class="add">
+      <div class="combo"><input id="camq" autocomplete="off" placeholder="Add a camera: model or sensor, e.g. ASI585MC or IMX678"
+        aria-label="Add a camera" aria-controls="camlist"><ul class="list" id="camlist" role="listbox" hidden></ul></div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="h-s">
+    <h2 id="h-s">Observing site (optional)</h2>
+    <p>It corrects the Moon's tilt for where you are on Earth (at most 1°). Leave it empty and the Earth's centre is used.</p>
+    <div class="site">
+      <label>Latitude, ° north<input id="lat" inputmode="decimal" placeholder="e.g. 48.2"></label>
+      <label>Longitude, ° east<input id="lon" inputmode="decimal" placeholder="e.g. 16.4"></label>
+      <label>Height, m<input id="height" inputmode="decimal" placeholder="0"></label>
+    </div>
+    <div class="add"><button class="btn" id="locate">Use my location</button><button class="btn ghost" id="clearsite">Clear</button>
+      <span class="empty" id="sitemsg"></span></div>
+    <div class="privacy"><b>Your location stays on this computer.</b> It is stored in your LunarAtlas settings only: never sent
+      anywhere, never written into exported images, their metadata or the info block. “Use my location” rounds it to 0.1° (about 10 km).</div>
+  </section>
+
+  <section class="card" aria-labelledby="h-u">
+    <h2 id="h-u">Your setups</h2>
+    <p>Every telescope × barlow × camera. Untick the ones you never use: close-ups are found faster.</p>
+    <p class="empty" id="nosetups">Add a telescope and a camera to see your setups.</p>
+    <div class="tablewrap"><table id="setups" hidden>
+      <thead><tr><th>Use</th><th>Telescope</th><th>Barlow</th><th>Camera</th><th class="n">Focal length</th><th class="n">Scale</th><th class="n">Field</th><th>Shows</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section class="card" aria-labelledby="h-r">
+    <h2 id="h-r">Start again</h2>
+    <p>Forget all equipment and the observing site.</p>
+    <button class="btn danger" id="reset">Reset equipment</button>
+  </section>
+</main>
+<div class="bar"><div><span class="msg" id="msg" aria-live="polite"></span><button class="btn primary lg" id="save" disabled>Save</button></div></div>
+<script src="/equipment.js"></script>
+<script src="/settings.js"></script>
+</body>
+</html>

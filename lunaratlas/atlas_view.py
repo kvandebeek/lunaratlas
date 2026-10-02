@@ -891,8 +891,11 @@ class Handler(BaseHTTPRequestHandler):
     def static(self, p):
         if p in ('/favicon.svg', '/lunaratlas.svg'):
             self.file(os.path.join(PAGE, 'lunaratlas.svg'), 'image/svg+xml', cache=True)
-        elif p in ('/viewer.js', '/boot.js', '/app.js', '/viewer.css', '/theme.css', '/friendly.js', '/exif.js'):
+        elif p in ('/viewer.js', '/boot.js', '/app.js', '/viewer.css', '/theme.css', '/friendly.js', '/exif.js',
+                   '/equipment.js', '/settings.js'):
             self.file(os.path.join(PAGE, p[1:]), 'text/javascript' if p.endswith('.js') else 'text/css')
+        elif p == '/cameras.json':
+            self.file(os.path.join(PAGE, 'cameras.json'), 'application/json', cache=True)
         elif p == '/fonts.css':
             self.reply(fonts_css_cached(), 'text/css')
         else:

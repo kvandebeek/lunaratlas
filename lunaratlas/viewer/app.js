@@ -5,6 +5,7 @@ const post = (url, obj) => fetch(url, { method: 'POST', headers: { 'Content-Type
 const STAMP = /\d{4}-\d{2}-\d{2}-\d{4}_\d/;
 const FR = window.LA_FRIENDLY;
 let file = null, path = null, t0 = 0, timer = null, xhr = null, lastForce = false;
+let eqState = { setups: [], recent: [] }, setupWas = '';
 
 function mb(n) { return n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : (n / 1e6).toFixed(1) + ' MB'; }
 
@@ -116,6 +117,33 @@ function renderStages() {
 }
 function toStage(i) { if (i > st.i) { st.i = i; st.since = Date.now(); st.searchFrac = i === 3 ? null : st.searchFrac; } }
 
+// ------------------------------------------------------------ equipment: "Taken with" and the short form
+async function loadEquipment() {
+  try { eqState = await (await fetch('/app/equipment')).json(); } catch (e) { /* none: every scale */ }
+  return eqState;
+}
+// the setups in the "Taken with" box: the recent ones first, then the others in use; none known: no box at all
+function fillSetups(pick) {
+  const sel = $('#setup'), by = new Map(eqState.setups.map((s) => [s.id, s]));
+  const ids = [...new Set([...eqState.recent.filter((i) => by.has(i)), ...eqState.setups.filter((s) => s.used).map((s) => s.id)])];
+  sel.textContent = '';
+  ids.forEach((i, k) => sel.add(new Option(by.get(i).text + (k === 0 && eqState.recent[0] === i ? ' · last time' : ''), i)));
+  sel.add(new Option('Not sure: search every scale', '*'));
+  sel.add(new Option('+ Another telescope, barlow or camera…', '+'));
+  sel.value = pick && [...sel.options].some((o) => o.value === pick) ? pick : (ids[0] || '*');
+  setupWas = sel.value;
+  show('#setupbox', ids.length > 0);
+}
+// what /app/locate gets for the chosen setup
+function setupExtra() {
+  const v = $('#setupbox').hidden ? '' : $('#setup').value;
+  return v === '*' ? { any_scale: true } : v && v !== '+' ? { setup: v } : {};
+}
+function askEquipment(title, onSetup, onAnyScale, cancel) {
+  window.LA_EQ.form({ title, name: file ? file.name : path ? path.split(/[\\/]/).pop() : '', onSetup, onAnyScale, cancel });
+}
+function locateWith(extra) { working('Finding where this is on the Moon'); begin('/app/locate', Object.assign({ force: lastForce }, extra)); }
+
 // ------------------------------------------------------------ flow
 function choose(f) {
   if (!f) return;
@@ -127,6 +155,7 @@ function choose(f) {
   show('#whenfrom', false);
   if (!STAMP.test(f.name)) prefillTime(f);
   show('#pick', false); show('#details'); show('#work', false); show('#recentbox', false);
+  fillSetups(); loadEquipment().then(() => { if (file === f) fillSetups($('#setup').value); });
   $('#go').focus();
 }
 
@@ -156,6 +185,7 @@ function working(title) {
   show('#pick', false); show('#details', false); show('#work'); show('#recentbox', false);
   $('#wtitle').textContent = title;
   show('#werr', false); show('#force', false); show('#again', false); show('#stop');
+  show('#anyscale', false); show('#othersetup', false);
   $('#stop').disabled = false;
   $('#log').textContent = '';
   resetStages(); st.since = Date.now();
@@ -184,7 +214,9 @@ function fail(msg, refused) {
     }
     $('#werr').append(ul);
   }
+  const notFound = /close-up not found|no optics setup gives a close-up/.test(msg || '');
   show('#werr'); show('#stop', false); show('#again'); show('#force', !!refused);
+  show('#anyscale', notFound && !lastAny); show('#othersetup', notFound);
   $('#wstep').textContent = '';
   $('#wtime').textContent = '';
   (refused ? $('#force') : $('#again')).focus();
@@ -204,7 +236,7 @@ function upload() {
     let j = {}; try { j = JSON.parse(x.responseText); } catch (e) { /* shown below */ }
     if (x.status !== 200) return fail(j.error || 'the copy failed');
     path = j.path; st.upload = null;
-    begin(j.located ? '/app/open' : '/app/locate', {});
+    begin(j.located ? '/app/open' : '/app/locate', j.located ? {} : setupExtra());
   };
   x.onabort = () => { xhr = null; reset(); };
   x.onerror = () => { xhr = null; fail('the copy failed: is LunarAtlas still running?'); };
@@ -216,8 +248,10 @@ function start(url, extra) {                 // from the list of earlier photos
   working(url === '/app/open' ? 'Opening' : 'Finding where this is on the Moon');
   begin(url, extra);
 }
+let lastAny = false;
 function begin(url, extra) {
   lastForce = !!(extra && extra.force);
+  lastAny = !!(extra && extra.any_scale);
   if (url === '/app/open') { toStage(5); $('#wtitle').textContent = 'Opening'; }
   showPhoto();                       // the upload has answered: the server's own thumbnail takes over from the file's
   renderStages();
@@ -245,6 +279,12 @@ function poll() {
     renderStages();
     if (s.phase === 'ready') { clearInterval(timer); st.ready = true; renderStages(); location.href = '/'; }
     if (s.phase === 'failed') fail(s.error || 'unknown error', s.refused);
+    if (s.phase === 'equipment') {             // a close-up, and no equipment known yet: ask, then search again
+      clearInterval(timer);
+      $('#wtitle').textContent = 'A close-up: which setup took it?';
+      askEquipment('A close-up: what took it?', (id) => { loadEquipment(); locateWith({ setup: id }); },
+        () => locateWith({ any_scale: true }), () => { post('/app/cancel').catch(() => {}); reset(); });
+    }
   }, 600);
 }
 
@@ -323,6 +363,14 @@ $('#when').oninput = () => show('#whenfrom', false);      // the user's own time
 $('#again').onclick = reset;
 $('#stop').onclick = stop;
 $('#force').onclick = () => { working('Finding where this is on the Moon'); begin('/app/locate', { force: true }); };
+$('#anyscale').onclick = () => locateWith({ any_scale: true });
+$('#othersetup').onclick = () => askEquipment('Which setup took it?', (id) => { loadEquipment(); locateWith({ setup: id }); },
+  () => locateWith({ any_scale: true }), () => {});
+$('#setup').onchange = () => {
+  if ($('#setup').value !== '+') { setupWas = $('#setup').value; return; }
+  askEquipment('What took this photo?', async (id) => { await loadEquipment(); fillSetups(id); },
+    () => { $('#setup').value = '*'; setupWas = '*'; }, () => { $('#setup').value = setupWas; });
+};
 $('#copy').onclick = async () => {
   try { await navigator.clipboard.writeText($('#log').textContent); $('#copy').textContent = 'Copied'; }
   catch (e) { const r = document.createRange(); r.selectNodeContents($('#log')); getSelection().removeAllRanges(); getSelection().addRange(r); $('#copy').textContent = 'Selected'; }
@@ -335,7 +383,9 @@ $('#quit').onclick = () => post('/app/quit').finally(() => {
 
 // back from the viewer while something runs: pick the progress up again
 fetch('/app/status').then((r) => r.json()).then((s) => {
-  if (s.phase === 'locating' || s.phase === 'opening') { path = s.path; working('Finding where this is on the Moon'); poll(); }
+  if (s.phase === 'locating' || s.phase === 'opening' || s.phase === 'equipment') {
+    path = s.path; working('Finding where this is on the Moon'); poll();
+  }
 }).catch(() => {});
 loadRecent();
 // the launcher stops a while after its last page is gone (browser mode): this page says it is still here
