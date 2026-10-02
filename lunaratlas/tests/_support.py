@@ -99,6 +99,7 @@ DATA = os.path.join(PKG, 'data')
 CLI = os.path.join(PKG, 'lunaratlas.py')
 SLOW = os.environ.get('LUNARATLAS_SLOW_TESTS', '') not in ('', '0')
 PERF = float(os.environ.get('LUNARATLAS_PERF_FACTOR', '1') or 1)
+NODE = shutil.which("node")                       # the self-test runs through it when present (run_selftest)
 
 
 def quiet(*a, **k):
@@ -417,6 +418,30 @@ def _kill_chrome(proc, profile):
         subprocess.run(['pkill', '-9', '-f', profile], capture_output=True)
     else:
         subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], capture_output=True)
+
+
+def run_selftest(url, tmp, patience_s):
+    """The self-test page run in real time through the DevTools protocol (ui/selftest.mjs): (match, log), like
+    dump_selftest, which it replaces where Node is available. A launch that fails to start is tried again."""
+    node = shutil.which('node')
+    log = ''
+    for n in (1, 2, 3):
+        d = os.path.join(tmp, f'selftest-{n}')
+        os.makedirs(d, exist_ok=True)
+        try:
+            r = subprocess.run([node, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ui', 'selftest.mjs'),
+                                find_chrome(), url, d, str(int(patience_s * 1000))],
+                               capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=patience_s * PERF * 2 + 60)
+        except subprocess.TimeoutExpired:
+            log += f'[run {n}: timed out]\n'
+            continue
+        m = re.search(r'<pre id="selftest">(.*?)</pre>', r.stdout, re.S)
+        if m:
+            return m, log + r.stderr
+        log += f'[run {n}: {r.stderr.strip()[:300]}]\n'
+        if 'Chrome did not start' not in r.stderr:
+            break                                         # the page ran and gave no result: a real failure, not a launch
+    return None, log
 
 
 def dump_selftest(url, tmp, virtual_time_ms, attempts=5):

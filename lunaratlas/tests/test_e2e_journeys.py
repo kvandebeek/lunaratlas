@@ -409,8 +409,9 @@ class BrowserJourneys(Journey):
         budget = int(40000 * S.PERF) if budget is None else budget
         v = S.Viewer(self.img, self.home)
         self.addCleanup(v.close)
-        # S.dump_selftest owns the Chrome launch: a launch that never writes anything is retried, see there
-        m, log_text = S.dump_selftest(f'{v.url}/selftest?group={group}&t={v.token}', self.tmp, budget)
+        # in real time through Node (S.run_selftest); --dump-dom's virtual time stalled groups partway on CI runners
+        url = f'{v.url}/selftest?group={group}&t={v.token}'
+        m, log_text = S.run_selftest(url, self.tmp, 30) if S.NODE else S.dump_selftest(url, self.tmp, budget)
         self.assertIsNotNone(m, f'the {group} self-test wrote no result:\n{log_text[-2000:]}')
         lines = html.unescape(m[1]).splitlines()
         self.assertEqual([l for l in lines if not l.startswith('PASS')], [], '\n'.join(lines) + log_text[-800:])

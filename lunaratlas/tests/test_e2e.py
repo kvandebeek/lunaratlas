@@ -386,11 +386,9 @@ class BrowserSelfTest(unittest.TestCase):
         img, _ = S.moon_image(tmp)
         v = S.Viewer(img, home)
         self.addCleanup(v.close)
-        # headless Chrome does not run requestAnimationFrame; the self-test calls render() itself. S.dump_selftest owns
-        # the launch (a launch that never writes anything is retried, see there); virtual time in simulated ms:
-        # real work behind it (image decode, the gazetteer fetch, label layout) still costs real CPU time, so
-        # scale it like every other budget here
-        m, log_text = S.dump_selftest(v.url + '/selftest?t=' + v.token, tmp, int(20000 * S.PERF))
+        # in real time through Node (S.run_selftest); without Node, --dump-dom with a virtual-time budget
+        url = v.url + '/selftest?t=' + v.token
+        m, log_text = S.run_selftest(url, tmp, 60) if S.NODE else S.dump_selftest(url, tmp, int(20000 * S.PERF))
         self.assertIsNotNone(m, 'the self-test wrote no result:\n' + log_text[-2000:])
         lines = html.unescape(m[1]).splitlines()
         self.assertGreaterEqual(len(lines), 10, lines)
