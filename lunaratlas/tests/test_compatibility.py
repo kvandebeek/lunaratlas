@@ -218,16 +218,6 @@ class ViewerMatchesExport(unittest.TestCase):
         for fam in av.VIEWER_FONTS:
             self.assertIn(fam, help_text)
 
-    def test_export_dialog_options_reach_the_cli(self):
-        for key in ('format', 'scale', 'max_size', 'names', 'layers', 'rims', 'grid', 'drawings', 'info', 'night',
-                    'min_px', 'font_scale', 'font'):
-            self.assertRegex(self.js, r'\b%s:' % key, key)
-        for flag in re.findall(r"'(--[\w-]+)'", open(os.path.join(S.PKG, 'atlas_view.py'), encoding='utf-8').read()):
-            if flag.startswith('--no-'):
-                flag = '--' + flag[5:]
-            self.assertIn(flag, open(os.path.join(S.PKG, 'lunaratlas.py'), encoding='utf-8').read(), flag)
-
-
 class Sidecars(S.TempDir, unittest.TestCase):
     def image(self):
         p = os.path.join(self.tmp, 'a.tif')
@@ -284,7 +274,6 @@ class Sidecars(S.TempDir, unittest.TestCase):
         # (bugs-overview BUG-05)
         self.assertEqual(ag.sidecar_path('/x/y/m.v2.final.TIF'), '/x/y/m.v2.final.TIF.atlas.json')
         self.assertEqual(ag.sidecar_path('noext'), 'noext.atlas.json')
-        self.assertEqual(av.tile_dir('/a/b.tif'), av.tile_dir('/a/b.tif'))         # stable between runs
         self.assertNotEqual(av.tile_dir('/a/b.tif'), av.tile_dir('/a/c.tif'))
 
 

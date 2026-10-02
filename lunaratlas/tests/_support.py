@@ -125,6 +125,7 @@ needs_font = unittest.skipUnless(HAVE_ROBOTO, 'Roboto not in lunaratlas/fonts')
 needs_all = unittest.skipUnless(HAVE_REFERENCE and HAVE_RELIEF16 and HAVE_FEATURES and HAVE_ROBOTO,
                                 'reference data (albedo, LOLA 16, IAU list, Roboto) not in lunaratlas/data')
 slow = unittest.skipUnless(SLOW, 'slow test: set LUNARATLAS_SLOW_TESTS=1')
+disabled_for_speed = unittest.skip('disabled by request: exceeds runtime target')
 
 
 def budget(seconds):

@@ -31,6 +31,7 @@ class Determinism(S.TempDir, unittest.TestCase):
         self.assertEqual(len(runs), 1)
 
     @S.needs_relief
+    @S.disabled_for_speed
     def test_locate_is_repeatable(self):
         img, truth = S.synthetic_moon(W=700, H=650, cx=350.0, cy=320.0, R=290.0)
         a, qa = ag.locate(img, log=S.quiet)

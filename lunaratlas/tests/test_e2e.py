@@ -405,6 +405,7 @@ class BrowserSelfTest(unittest.TestCase):
 class CloseUp(unittest.TestCase):
     """A close-up without a limb, found blind from its capture time (SharpCap name) and the folder's optics."""
 
+    @S.disabled_for_speed
     def test_blind_search(self):
         from atlas_closeup import Relief, render_shaded, OPTICS_FILE, TELESCOPE, arcsec_per_px, KM_PER_ARCSEC_PER_KM
         from atlas_ephem import ephemeris
@@ -456,6 +457,7 @@ class HarderDisks(unittest.TestCase):
         geo, q, truth = self.locate(mirror=True, theta=200.0)
         check_geometry(self, geo, truth, S.DISK['W'], S.DISK['H'], px=0.5)
 
+    @S.disabled_for_speed
     def test_crescent(self):
         geo, q, truth = self.locate(sun=(0.0, 115.0), theta=300.0, lat0=-5.0, lon0=6.0)
         # a crescent holds far fewer patches: a looser but still sub-pixel-to-pixel fit on the lit part

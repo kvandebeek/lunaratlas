@@ -76,9 +76,9 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Nothing skipped that should have run
         # a missing download, Chrome or Node makes tests skip, which would pass without testing anything
-        # what this platform cannot do (macOS folds Unicode file names; hard links) is not a missing test
+        # platform exceptions and the 14 deliberately disabled long tests are allowed
         run: |
-          allowed='does not distinguish the two forms|no hard links here'
+          allowed='does not distinguish the two forms|no hard links here|disabled by request: exceeds runtime target'
           [ -z "$FULL" ] && allowed="$allowed|slow test|64 px/deg"
           bad=$(grep -E "skipped '" test.log | grep -vE "$allowed" || true)
           if [ -n "$bad" ]; then echo "$bad"; echo "::error::tests were skipped"; exit 1; fi

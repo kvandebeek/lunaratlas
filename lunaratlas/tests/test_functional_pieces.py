@@ -109,7 +109,8 @@ class SmallHelpers(unittest.TestCase):
         for url, want in (('https://planetarynames.wr.usgs.gov/Feature/1234', '1234'),
                           ('http://planetarynames.wr.usgs.gov/Feature/1234/', '1234'),
                           ('1234', '1234'), ('', ''), (None, ''),
-                          ('https://example.com/Feature/abc', ''), ('a/12b', ''),
+                          ('https://example.com/Feature/abc', ''), ('a/12b', ''), ('http://x/y', ''),
+                          ('javascript:alert(1)', ''),
                           ('https://example.com/Feature/007', '007')):
             with self.subTest(url):
                 self.assertEqual(av.link_id(url), want)
@@ -412,4 +413,3 @@ class CommandLineHelpers(S.TempDir, unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

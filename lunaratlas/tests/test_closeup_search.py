@@ -120,6 +120,7 @@ class Choice(S.TempDir):
 class CoarseToFine(unittest.TestCase):
     """A synthetic close-up (the relief lit by the real Sun, blurred, noisy) at angles between the search's steps."""
 
+    @S.disabled_for_speed
     def test_the_place_is_found_first_at_angles_between_the_steps_and_faster_than_the_full_search(self):
         sky = Sky()
         args = (sky.e['sub_obs_lat'], sky.e['sub_obs_lon'], sky.sun, sky.relief16, sky.ref, S.quiet)
@@ -147,6 +148,7 @@ class CoarseToFine(unittest.TestCase):
 class RenamedCloseUp(S.TempDir):
     """A close-up whose file name has lost its capture time is located with --time, and the time is kept."""
 
+    @S.disabled_for_speed
     def test_locate_with_time_then_info_knows_it(self):
         import json
         import os

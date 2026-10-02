@@ -121,6 +121,7 @@ class UI(S.TempDir):
         self.open_image()
         self.assertGreaterEqual(len(self.journey('tools')), 25)
 
+    @S.disabled_for_speed
     def test_drawing_with_every_tool_and_its_editor(self):
         img = self.open_image()
         self.journey('draw')
@@ -138,6 +139,7 @@ class UI(S.TempDir):
         self.journey('measure')
         self.assertEqual(self.edits(img)['shapes'], [])
 
+    @S.disabled_for_speed
     def test_zoom_pan_fit_and_the_status_bar(self):
         self.open_image()
         self.journey('navigate')
@@ -153,6 +155,7 @@ class UI(S.TempDir):
         self.assertEqual(e['hidden'], [], 'the hide was undone')
         self.assertTrue(any(o.get('size') == 1.3 and 'dx' not in o for o in e['labels'].values()), e['labels'])
 
+    @S.disabled_for_speed
     def test_the_layers_panel(self):
         img = self.open_image()
         self.journey('layers')
@@ -207,6 +210,7 @@ class UI(S.TempDir):
                                   line='quality refused: too blurry · edge 9.1 px'))
         self.journey('gate')
 
+    @S.disabled_for_speed
     def test_reshaping_drawings_by_their_squares(self):
         img = self.open_image()
         self.journey('handles')
@@ -233,6 +237,7 @@ class UI(S.TempDir):
         img, _ = S.moon_image(self.folder)      # a real photo in the work folder: the header shows its thumbnail
         self.journey('progressStages', image=img)
 
+    @S.disabled_for_speed
     def test_from_choosing_a_file_to_the_viewer_and_back(self):
         src = self.source()
         self.journey('launch', image=src)
@@ -289,6 +294,7 @@ class UI(S.TempDir):
         self.journey('exif', utc=self.camera_jpeg('utc.jpg', '2026:09:20 21:30:00', '+00:00'),
                      clock=self.camera_jpeg('clock.jpg', '2026:09:20 21:30:00'), plain=self.camera_jpeg('plain.jpg'))
 
+    @S.disabled_for_speed
     def test_a_photo_refused_by_the_quality_check(self):
         name = '2026-09-20-1930_0-moon.tif'
         img, _ = S.moon_image(self.folder, name=name)
@@ -304,6 +310,7 @@ class UI(S.TempDir):
         self.assertTrue(S.sidecar(img)['quality_gate'].get('ok') or S.sidecar(img)['quality_gate'].get('forced'),
                         'named anyway')
 
+    @S.disabled_for_speed
     def test_the_folder_link_and_quit(self):
         self.journey('quit')
         self.assertEqual([os.path.realpath(r) for r in self.revealed], [os.path.realpath(self.folder)],

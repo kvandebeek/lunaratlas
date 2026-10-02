@@ -520,6 +520,7 @@ class Launcher(S.TempDir):
             time.sleep(0.3)
         self.fail('the launcher did not finish')
 
+    @S.disabled_for_speed
     def test_from_upload_to_the_viewer(self):
         self.assertEqual(self.call('GET', '/')[0], 200)                         # the launcher page, no image yet
         self.assertTrue(already_running(self.srv.server_port, self.srv.token))

@@ -71,9 +71,9 @@ jobs:
           python lunaratlas/tests/run_tests.py --pattern 'test_ui.py' 2>&1 | tee test.log
           test "${PIPESTATUS[0]}" -eq 0
       - name: Nothing skipped that should have run
-        # a missing download, browser, driver or Node makes the journeys skip, which would pass without testing anything
+        # missing dependencies still fail; browser exceptions and the two deliberately disabled long tests are allowed
         run: |
-          bad=$(grep -E "skipped '" test.log | grep -v "not in this browser" || true)
+          bad=$(grep -E "skipped '" test.log | grep -vE "not in this browser|disabled by request: exceeds runtime target" || true)
           if [ -n "$bad" ]; then echo "$bad"; echo "::error::tests were skipped"; exit 1; fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         if: always()

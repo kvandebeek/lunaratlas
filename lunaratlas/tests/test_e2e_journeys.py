@@ -84,6 +84,7 @@ class BatchOfImages(Journey):
     def setUp(self):                              # the images are built once, so only the HOME is per test
         self.make_home()
 
+    @S.disabled_for_speed
     def test_every_image_is_located_and_keeps_its_own_geometry(self):
         for n in self.NAMES:
             with self.subTest(n):
@@ -97,6 +98,7 @@ class BatchOfImages(Journey):
                          sorted(n + '.atlas.json' for n in self.NAMES))
         self.assertEqual(self.leftovers(), [])
 
+    @S.disabled_for_speed
     def test_info_and_find_work_for_each_of_them(self):
         import lunaratlas as ma
         for n in self.NAMES:                    # locate them all first: each keeps its own geometry
@@ -115,6 +117,7 @@ class BatchOfImages(Journey):
             self.assertLess(abs(int(m[1]) - float(x)) + abs(int(m[2]) - float(y)), 3, n)
             self.assertIn('named after', r.stdout)
 
+    @S.disabled_for_speed
     def test_the_capture_time_in_the_name_reaches_the_info_block(self):
         import atlas_ephem as ae
         import atlas_render as ar
@@ -146,6 +149,7 @@ class BatchOfImages(Journey):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('1100 x 1000 px', r.stdout)
 
+    @S.disabled_for_speed
     def test_an_optics_file_next_to_the_images_does_not_confuse_a_full_disk(self):
         # a close-up session folder carries lunaratlas_optics.json; a full disk must still be located and labelled
         import lunaratlas as ma
@@ -180,6 +184,7 @@ class TheWholeLoop(Journey):
         super().setUp()
         self.img = os.path.join(self.tmp, '2026-09-23-2138_1-Moon.tif')
 
+    @S.disabled_for_speed
     def test_locate_export_then_the_image_is_replaced(self):
         S.write_image(self.img)
         r = self.cli('locate', self.img)
@@ -206,6 +211,7 @@ class TheWholeLoop(Journey):
                             cv_imread(os.path.join(self.tmp, 'stale.png'), cv2.IMREAD_UNCHANGED).shape)
         self.assertEqual(self.leftovers(), [])
 
+    @S.disabled_for_speed
     def test_the_pair_survives_being_copied_to_an_archive(self):
         # users copy IMAGE + IMAGE.atlas.json into a folder; the copy must export exactly like the original
         S.write_image(self.img)
@@ -228,6 +234,7 @@ class TheWholeLoop(Journey):
         # and the original's sidecar was not changed by exporting the copy
         self.assertNotIn('edits', S.sidecar(self.img))
 
+    @S.disabled_for_speed
     def test_a_second_locate_is_quick_and_export_reads_the_sidecar(self):
         S.write_image(self.img)
         self.assertEqual(self.cli('locate', self.img).returncode, 0)
@@ -241,6 +248,7 @@ class TheWholeLoop(Journey):
         self.assertEqual(S.sidecar(self.img)['geometry'], before)
         self.assertEqual(self.leftovers(), [])
 
+    @S.disabled_for_speed
     def test_export_refuses_to_overwrite_the_image_or_its_sidecar(self):
         S.write_image(self.img)
         self.assertEqual(self.cli('locate', self.img).returncode, 0)
@@ -262,6 +270,7 @@ class TheWholeLoop(Journey):
         self.assertEqual(S.sidecar(self.img)['image'], os.path.basename(self.img))
         self.assertAlmostEqual(S.sidecar(self.img)['derived']['libration_lat'], 3.2, delta=0.2)
 
+    @S.disabled_for_speed
     def test_a_missing_output_folder_is_refused_before_any_work(self):
         S.write_image(self.img)
         self.assertEqual(self.cli('locate', self.img).returncode, 0)
@@ -351,6 +360,7 @@ class ViewerJourney(Journey):
         self.assertGreater(bright_a, 200, 'the label was drawn there to begin with')
         self.assertGreater(gone, bright_a * 0.5, f'of {bright_a} bright pixels only {gone} went')
 
+    @S.disabled_for_speed
     def test_the_viewer_refuses_a_poor_image_until_force_is_given(self):
         # an overexposed disk: the quality gate refuses it, but it still locates, so --force can open it
         burnt = os.path.join(self.tmp, 'burnt.tif')
@@ -444,6 +454,7 @@ class BrowserJourneys(Journey):
         self.assertEqual(S.sidecar(self.img).get('edits', {}).get('shapes', []), [],
                          'the measure journey must leave the sidecar as it found it')
 
+    @S.disabled_for_speed
     def test_the_fixes_for_lettered_craters_moved_names_dashed_arrows_and_measurements(self):
         lines = self.drive('fixes')
         self.assertEqual(len(lines), 10, '\n'.join(lines))

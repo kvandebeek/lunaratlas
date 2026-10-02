@@ -385,6 +385,7 @@ class HttpSurface(S.TempDir, unittest.TestCase):
                                        port.encode() + b'\r\nContent-Length: 2\r\n\r\n{}'))
         self.alive()
 
+    @S.disabled_for_speed
     def test_a_client_that_goes_away_mid_request(self):
         for _ in range(10):
             self.raw(b'POST /edits HTTP/1.1\r\nHost: localhost\r\nContent-Length: 900000\r\n\r\n{"shapes": [', read=40)

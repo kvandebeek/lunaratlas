@@ -351,12 +351,6 @@ class Commands(S.TempDir, unittest.TestCase):
 
 
 class ViewerServerSide(S.TempDir, unittest.TestCase):
-    def test_link_id(self):
-        self.assertEqual(av.link_id('http://planetarynames.wr.usgs.gov/Feature/1316'), '1316')
-        self.assertEqual(av.link_id('http://x/Feature/1316/'), '1316')
-        for bad in (None, '', 'http://x/y', 'javascript:alert(1)'):
-            self.assertEqual(av.link_id(bad), '')
-
     def test_clean_edits(self):
         shapes = [dict(kind='circle', cx=1, cy=2, r=3)] * 6000 + [dict(kind='bad')]
         e = av.clean_edits(dict(shapes=shapes, hidden=['b', 'a', 'a', 3, None], labels={'x': dict(dx=1, dy=2), 'y': 'z',
