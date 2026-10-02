@@ -49,6 +49,8 @@
     // choice is kept in the edits for the export
     async layers() {
       for (let i = 0; i < 60 && T.placed.length === 0; i++) await wait(200);
+      // the page re-fits once its fonts have loaded; zoom only after that, or the late fit undoes the zoom
+      await Promise.race([document.fonts.ready, wait(5000)]); await wait(500);
       const before = T.placed.length;
       key('+'); key('+'); key('+'); await wait(300); T.render();
       ok(T.view.s > 1, `zoomed in (${T.view.s.toFixed(2)}x)`);
