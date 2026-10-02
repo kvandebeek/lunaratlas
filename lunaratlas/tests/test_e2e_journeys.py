@@ -396,69 +396,15 @@ class BrowserJourneys(Journey):
         # Chrome's own --virtual-time-budget, in simulated ms: real work gated behind it (image decode, the
         # gazetteer fetch, label layout) still costs real CPU time, so a loaded CI runner can run out of this
         # budget before that work is done even though the self-test's own polling loop still had time left
-        # (seen as "0 names placed"/"no crater label to drag" on shared runners, never on a quiet machine).
         budget = int(40000 * S.PERF) if budget is None else budget
         v = S.Viewer(self.img, self.home)
         self.addCleanup(v.close)
-        profile = os.path.join(self.tmp, 'chrome-profile')
-        dom, err = os.path.join(self.tmp, 'dom.html'), os.path.join(self.tmp, 'chrome.log')
-        with open(dom, 'w') as out, open(err, 'w') as log:              # Chrome's helpers keep the pipe open
-            # --disable-background-networking alone did not stop it: Chrome's GCM push-registration retries
-            # (real DNS/connect attempts against a sandbox with no real route out, each slow to time out, then
-            # retried with backoff) kept the process alive indefinitely -- --dump-dom only writes once the
-            # process is ready to exit, and --virtual-time-budget's clock stalls on a real pending network
-            # call regardless. Make every such lookup fail instantly instead of timing out -- EXCLUDE is
-            # required, not redundant: the wildcard MAP matches a literal IP too, not only names needing a real
-            # DNS lookup, so without it this also blackholed v.url itself (verified directly: with EXCLUDE,
-            # a request to our own local server comes back normally; without it, Chrome serves its own
-            # built-in directory-listing page for the (unreachable) address instead).
-            proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--use-mock-keychain', '--no-first-run',
-                                     '--no-default-browser-check', '--disable-background-networking',
-                                     '--host-resolver-rules=MAP * 127.0.0.1:1,EXCLUDE 127.0.0.1', f'--user-data-dir={profile}',
-                                     '--window-size=1400,900', f'--virtual-time-budget={budget}',
-                                     '--dump-dom', f'{v.url}/selftest?group={group}&t={v.token}'], stdout=out, stderr=log)
-        self.addCleanup(self.kill, proc, profile)
-
-        def read():
-            if not os.path.exists(dom) or os.path.getsize(dom) == 0:
-                return None
-            with open(dom, encoding='utf-8', errors='replace') as fh:
-                return re.search(r'<pre id="selftest">(.*?)</pre>', fh.read(), re.S)
-
-        def ready():
-            m = read()
-            if m:
-                return m
-            if proc.poll() is not None:          # chrome already exited: no point waiting out the rest of the budget
-                with open(err, errors='replace') as fh:
-                    log_text = fh.read()
-                raise AssertionError(f'chrome exited {proc.returncode} without a {group} result:\n{log_text[-2000:]}')
-            return None
-
-        try:
-            m = wait_for(ready, 120, f'the {group} result')
-        except AssertionError as e:
-            # ready() only raises once chrome has exited; reaching the timeout instead means it is still
-            # running (hung, or just never produced a dump) -- surface its log too, not just "did not happen"
-            with open(err, errors='replace') as fh:
-                log_text = fh.read()
-            raise AssertionError(f'{e} (chrome still running, pid {proc.pid}):\n{log_text[-2000:]}') from None
-        with open(err, errors='replace') as fh:
-            log_text = fh.read()
-        self.assertIsNotNone(m, f'the self-test wrote no result:\n{log_text[-2000:]}')
+        # S.dump_selftest owns the Chrome launch: a launch that never writes anything is retried, see there
+        m, log_text = S.dump_selftest(f'{v.url}/selftest?group={group}&t={v.token}', self.tmp, budget)
+        self.assertIsNotNone(m, f'the {group} self-test wrote no result:\n{log_text[-2000:]}')
         lines = html.unescape(m[1]).splitlines()
         self.assertEqual([l for l in lines if not l.startswith('PASS')], [], '\n'.join(lines) + log_text[-800:])
         return lines
-
-    @staticmethod
-    def kill(proc, profile):
-        if proc.poll() is None:
-            proc.kill()
-        if os.name == 'posix':
-            subprocess.run(['pkill', '-9', '-f', profile], capture_output=True)
-        else:
-            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], capture_output=True)
-
 
     def test_the_page_places_one_label_per_name_and_all_of_them_on_the_canvas(self):
         lines = self.drive('load')

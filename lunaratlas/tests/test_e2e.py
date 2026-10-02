@@ -386,53 +386,17 @@ class BrowserSelfTest(unittest.TestCase):
         img, _ = S.moon_image(tmp)
         v = S.Viewer(img, home)
         self.addCleanup(v.close)
-        profile = os.path.join(tmp, 'chrome-profile')
-        dom, err = os.path.join(tmp, 'dom.html'), os.path.join(tmp, 'chrome.log')
-        # Chrome's helper processes keep a pipe open after the dump: write to a file, poll it, then kill the profile's
-        # processes (headless Chrome does not run requestAnimationFrame; the self-test calls render() itself)
-        with open(dom, 'w') as out, open(err, 'w') as log:
-            # Chrome's own virtual time, in simulated ms: real work behind it (image decode, the gazetteer
-            # fetch, label layout) still costs real CPU time, so scale it like every other budget here, or a
-            # loaded CI runner can exhaust it before that work is done ("no crater label to drag" and similar)
-            # --disable-background-networking alone did not stop it: Chrome's GCM push-registration retries
-            # (real DNS/connect attempts against a sandbox with no real route out, each slow to time out, then
-            # retried with backoff) kept the process alive indefinitely -- --dump-dom only writes once the
-            # process is ready to exit, and --virtual-time-budget's clock stalls on a real pending network
-            # call regardless. Make every such lookup fail instantly instead of timing out -- EXCLUDE is
-            # required, not redundant: the wildcard MAP matches a literal IP too, not only names needing a real
-            # DNS lookup, so without it this also blackholed v.url itself (verified directly: with EXCLUDE,
-            # a request to our own local server comes back normally; without it, Chrome serves its own
-            # built-in directory-listing page for the (unreachable) address instead).
-            proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--use-mock-keychain', '--no-first-run',
-                                     '--no-default-browser-check', '--disable-background-networking',
-                                     '--host-resolver-rules=MAP * 127.0.0.1:1,EXCLUDE 127.0.0.1', f'--user-data-dir={profile}',
-                                     '--window-size=1400,900', f'--virtual-time-budget={int(20000 * S.PERF)}',
-                                     '--dump-dom', v.url + '/selftest?t=' + v.token],
-                                    stdout=out, stderr=log)
-        self.addCleanup(self.kill_profile, proc, profile)
-        m, t0 = None, time.time()
-        while m is None and time.time() - t0 < S.budget(120):
-            time.sleep(0.5)
-            with open(dom, encoding='utf-8', errors='replace') as fh:
-                m = re.search(r'<pre id="selftest">(.*?)</pre>', fh.read(), re.S)
-            if m is None and proc.poll() is not None:
-                break
-        with open(err, errors='replace') as fh:
-            self.assertIsNotNone(m, 'the self-test wrote no result:\n' + fh.read()[-2000:])
+        # headless Chrome does not run requestAnimationFrame; the self-test calls render() itself. S.dump_selftest owns
+        # the launch (a launch that never writes anything is retried, see there); virtual time in simulated ms:
+        # real work behind it (image decode, the gazetteer fetch, label layout) still costs real CPU time, so
+        # scale it like every other budget here
+        m, log_text = S.dump_selftest(v.url + '/selftest?t=' + v.token, tmp, int(20000 * S.PERF))
+        self.assertIsNotNone(m, 'the self-test wrote no result:\n' + log_text[-2000:])
         lines = html.unescape(m[1]).splitlines()
         self.assertGreaterEqual(len(lines), 10, lines)
         failed = [l for l in lines if not l.startswith('PASS')]
         self.assertEqual(failed, [], '\n'.join(lines))
         self.assertEqual(S.sidecar(img)['edits']['shapes'], [])            # the self-test undoes what it did
-
-    @staticmethod
-    def kill_profile(proc, profile):
-        if proc.poll() is None:
-            proc.kill()
-        if os.name == 'posix':
-            subprocess.run(['pkill', '-9', '-f', profile], capture_output=True)
-        else:
-            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], capture_output=True)
 
 
 @S.slow

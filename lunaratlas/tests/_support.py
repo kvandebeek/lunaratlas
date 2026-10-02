@@ -35,6 +35,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -402,6 +403,75 @@ def find_webdriver(name, runner_dir=None):
              os.path.join(os.environ[runner_dir], exe) if runner_dir and os.environ.get(runner_dir) else None,
              shutil.which(name), '/usr/bin/' + name]
     return next((c for c in cands if c and os.path.exists(c)), None)
+
+
+def _kill_chrome(proc, profile):
+    """Chrome and every helper it started: they keep running (and holding the profile) after the parent dies."""
+    if proc.poll() is None:
+        proc.kill()
+    if os.name == 'posix':
+        subprocess.run(['pkill', '-9', '-f', profile], capture_output=True)
+    else:
+        subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], capture_output=True)
+
+
+def dump_selftest(url, tmp, virtual_time_ms, attempts=3):
+    """Open `url` (a /selftest page) in headless Chrome with --dump-dom; return (match, log): the regex match of the
+    page's <pre id="selftest">...</pre> (None if there was none) and Chrome's own stderr, with a note per launch
+    that had to be given up on.
+
+    A launch that works writes its dump within a few seconds on a quiet machine (1.4-2.9 s measured on Windows);
+    one that is stuck never writes anything at all, however long it is given -- measured on a Windows 10 PC with
+    the same command line: 7 of 10 launches hung, every hung log carrying the updater's "Failed to open named
+    pipe server process ... Access is denied", every good launch an empty one. (macOS logs the same updater
+    family, Linux a GCM/D-Bus retry loop; the cause is Chrome's own startup, not this harness or the page.)
+    Neither --disable-background-networking nor --host-resolver-rules is the cause or the cure (same matrix:
+    hangs with, without, or with either alone). So do not wait out the long budget for something that
+    does not come: give each launch but the last a short patience, then kill it and start again with a fresh
+    profile. The last launch keeps the generous wait, so a healthy but slow runner is never cut off by this.
+    Only silence is retried: a launch that wrote a dump without the result in it is a real failure."""
+    patience = 10 + 5 * PERF                         # seconds; a good launch needs ~2 on a quiet machine
+    notes = []
+    for n in range(1, attempts + 1):
+        last = n == attempts
+        wait_for_it = budget(120) if last else patience
+        profile = os.path.join(tmp, f'chrome-profile-{n}')
+        dom, err = os.path.join(tmp, f'dom-{n}.html'), os.path.join(tmp, f'chrome-{n}.log')
+        with open(dom, 'w') as out, open(err, 'w') as log:             # Chrome's helpers keep a pipe open: use files
+            # kept from earlier attempts at this: harmless, and they silence a GCM retry loop in the log, but they
+            # do NOT stop the hang. EXCLUDE is required: the wildcard MAP matches a literal IP too, so without it
+            # our own server (always opened by IP literal) is blackholed as well.
+            proc = subprocess.Popen([find_chrome(), '--headless=new', '--disable-gpu', '--use-mock-keychain',
+                                     '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
+                                     '--host-resolver-rules=MAP * 127.0.0.1:1,EXCLUDE 127.0.0.1',
+                                     f'--user-data-dir={profile}', '--window-size=1400,900',
+                                     f'--virtual-time-budget={virtual_time_ms}', '--dump-dom', url],
+                                    stdout=out, stderr=log)
+        try:
+            t0, text = time.time(), ''
+            while time.time() - t0 < wait_for_it:
+                time.sleep(0.2)
+                if os.path.exists(dom):
+                    with open(dom, encoding='utf-8', errors='replace') as fh:
+                        text = fh.read()
+                m = re.search(r'<pre id="selftest">(.*?)</pre>', text, re.S)
+                if m:
+                    with open(err, errors='replace') as fh:
+                        return m, ''.join(notes) + fh.read()
+                if proc.poll() is not None and text.strip():
+                    break                                                # a dump without the result: real failure
+                if proc.poll() is not None:
+                    break                                                # exited without writing anything at all
+            with open(err, errors='replace') as fh:
+                log = fh.read()
+            if text.strip() or last:                                      # real failure, or out of attempts
+                return None, ''.join(notes) + log
+            why = 'exited without output' if proc.poll() is not None else f'wrote nothing in {wait_for_it:.0f}s'
+            notes.append(f'[launch {n} of {attempts}: {why}, retrying with a fresh profile; its log: {log[-400:]!r}]\n')
+            print(notes[-1].rstrip(), file=sys.stderr, flush=True)       # visible in the run, not only on failure
+        finally:
+            _kill_chrome(proc, profile)
+    return None, ''.join(notes)
 
 
 # the browser test_ui drives: chrome (the default), edge, firefox or safari
