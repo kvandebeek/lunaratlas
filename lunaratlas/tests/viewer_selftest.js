@@ -208,8 +208,15 @@
     // names are laid out after the edits have been fetched, so wait for that rather than for a fixed time (a
     // loaded CI machine can still be laying labels out well past a blind 1.5s, unlike GROUPS.load()'s own wait)
     await Promise.race([document.fonts.ready, wait(5000)]);
-    for (let i = 0; i < 60 && T.placed.length === 0; i++) await wait(200);
-    if (T.placed.length === 0) ok(false, `no name was placed at the start (${diag()})`);   // what the page was waiting for
+    // the page draws from a requestAnimationFrame; where no frame ever comes (or one throws), nothing is placed
+    // however long this waits, so say whether frames come and ask for a drawing directly
+    let frames = 0, drawError = '';
+    const tick = () => { frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick);
+    for (let i = 0; i < 60 && T.placed.length === 0; i++) {
+      await wait(200);
+      if (i % 5 === 4 && T.placed.length === 0) { try { T.render(); } catch (e) { drawError = String(e && e.stack || e).slice(0, 300); } }
+    }
+    if (T.placed.length === 0) ok(false, `no name was placed at the start (${diag()}, ${frames} animation frames, render ${drawError ? 'threw ' + drawError : 'did not throw'})`);
     if (only) {
       if (GROUPS[only]) await GROUPS[only](); else ok(false, `unknown group ${only}`);
     } else {
