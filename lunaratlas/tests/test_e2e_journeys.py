@@ -391,8 +391,13 @@ class BrowserJourneys(Journey):
         super().setUp()
         self.img, self.geo = S.moon_image(self.tmp)
 
-    def drive(self, group, budget=40000):
+    def drive(self, group, budget=None):
         """Run one journey group and return the PASS lines it wrote into <pre id="selftest">."""
+        # Chrome's own --virtual-time-budget, in simulated ms: real work gated behind it (image decode, the
+        # gazetteer fetch, label layout) still costs real CPU time, so a loaded CI runner can run out of this
+        # budget before that work is done even though the self-test's own polling loop still had time left
+        # (seen as "0 names placed"/"no crater label to drag" on shared runners, never on a quiet machine).
+        budget = int(40000 * S.PERF) if budget is None else budget
         v = S.Viewer(self.img, self.home)
         self.addCleanup(v.close)
         profile = os.path.join(self.tmp, 'chrome-profile')

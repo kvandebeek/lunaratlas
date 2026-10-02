@@ -391,9 +391,12 @@ class BrowserSelfTest(unittest.TestCase):
         # Chrome's helper processes keep a pipe open after the dump: write to a file, poll it, then kill the profile's
         # processes (headless Chrome does not run requestAnimationFrame; the self-test calls render() itself)
         with open(dom, 'w') as out, open(err, 'w') as log:
+            # Chrome's own virtual time, in simulated ms: real work behind it (image decode, the gazetteer
+            # fetch, label layout) still costs real CPU time, so scale it like every other budget here, or a
+            # loaded CI runner can exhaust it before that work is done ("no crater label to drag" and similar)
             proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--use-mock-keychain', '--no-first-run',
                                      '--no-default-browser-check', f'--user-data-dir={profile}', '--window-size=1400,900',
-                                     '--virtual-time-budget=20000', '--dump-dom', v.url + '/selftest?t=' + v.token],
+                                     f'--virtual-time-budget={int(20000 * S.PERF)}', '--dump-dom', v.url + '/selftest?t=' + v.token],
                                     stdout=out, stderr=log)
         self.addCleanup(self.kill_profile, proc, profile)
         m, t0 = None, time.time()
