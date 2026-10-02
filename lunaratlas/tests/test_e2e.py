@@ -394,9 +394,13 @@ class BrowserSelfTest(unittest.TestCase):
             # Chrome's own virtual time, in simulated ms: real work behind it (image decode, the gazetteer
             # fetch, label layout) still costs real CPU time, so scale it like every other budget here, or a
             # loaded CI runner can exhaust it before that work is done ("no crater label to drag" and similar)
+            # --disable-background-networking: without it, Chrome's own GCM push registration retries against a
+            # sandbox with no real route to Google kept the process alive indefinitely, so --dump-dom (which
+            # only writes once the process is ready to exit) never did
             proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--use-mock-keychain', '--no-first-run',
-                                     '--no-default-browser-check', f'--user-data-dir={profile}', '--window-size=1400,900',
-                                     f'--virtual-time-budget={int(20000 * S.PERF)}', '--dump-dom', v.url + '/selftest?t=' + v.token],
+                                     '--no-default-browser-check', '--disable-background-networking', f'--user-data-dir={profile}',
+                                     '--window-size=1400,900', f'--virtual-time-budget={int(20000 * S.PERF)}',
+                                     '--dump-dom', v.url + '/selftest?t=' + v.token],
                                     stdout=out, stderr=log)
         self.addCleanup(self.kill_profile, proc, profile)
         m, t0 = None, time.time()

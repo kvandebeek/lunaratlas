@@ -1,7 +1,7 @@
 // A user at the keyboard and mouse, through the Chrome DevTools protocol (no packages: Node's own WebSocket).
 // Input goes through Chrome's input pipeline (Input.dispatch*), so events are trusted and hit-tested like a real
 // click: a button under a panel, a zero-size control or a disabled one fails instead of "working".
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -47,6 +47,7 @@ export class Browser {
     const proc = spawn(chrome, ['--headless=new', '--use-mock-keychain', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
       '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--mute-audio',
+      '--disable-background-networking',    // GCM/update/variations pings have no real route out in CI; let none start
       '--force-color-profile=srgb', '--disable-features=Translate,MediaRouter', `--window-size=${width},${height}`,
       // Edge on Linux ships without Chrome's setuid sandbox helper, so without this it never writes
       // DevToolsActivePort and exits silently; harmless here since this only ever opens our own test pages.
@@ -70,13 +71,13 @@ export class Browser {
       if (!page) await sleep(100);
     }
     if (!page) { proc.kill(); throw new Error('Chrome did not start'); }   // DevTools came up with no page tab
-    const b = new Browser(proc, page.webSocketDebuggerUrl, width, height);
+    const b = new Browser(proc, page.webSocketDebuggerUrl, width, height, profile);
     await b.open();
     return b;
   }
 
-  constructor(proc, url, width, height) {
-    Object.assign(this, { proc, url, width, height, seq: 0, pending: new Map(), listeners: [] });
+  constructor(proc, url, width, height, profile) {
+    Object.assign(this, { proc, url, width, height, profile, seq: 0, pending: new Map(), listeners: [] });
     this.errors = []; this.dialogs = []; this.chooser = null; this.coverage = [];
   }
 
@@ -129,6 +130,15 @@ export class Browser {
       this.proc.kill('SIGKILL');
       await Promise.race([gone, sleep(5000)]);
     }
+    // killing the one process we spawned does not reap its renderer/gpu/utility children (Node does not put
+    // them in a process group of their own, and a plain SIGKILL on the parent gives them no chance to notice
+    // it is gone): these were found still running hours later, accumulating across a long session. Match
+    // every other Chrome cleanup in this suite (test_e2e.py/test_e2e_journeys.py's own kill()) and sweep by
+    // the profile directory's own path, which only this one Chrome instance ever uses.
+    try {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/F', '/T', '/PID', String(this.proc.pid)]);
+      else spawnSync('pkill', ['-9', '-f', this.profile]);
+    } catch { /* best effort */ }
   }
 
   // ---------------------------------------------------------------- page
