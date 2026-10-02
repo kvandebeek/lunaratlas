@@ -118,7 +118,10 @@ export class WebDriverBrowser extends Browser {
     if (this.session) { try { await Promise.race([this.cmd('DELETE', ''), sleep(5000)]); } catch { /* gone */ } this.session = null; }
     if (this.proc.exitCode === null) {
       const gone = new Promise((r) => this.proc.once('exit', r));
-      this.proc.kill();
+      // a snap-confined geckodriver (Ubuntu) refuses the signal with EACCES: that is not a failed journey, the
+      // session is already deleted and the driver idles
+      this.proc.on('error', () => {});
+      try { this.proc.kill(); } catch { /* not ours to kill */ }
       await Promise.race([gone, sleep(5000)]);
     }
   }
