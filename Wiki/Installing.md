@@ -6,11 +6,13 @@ Get it from the **[releases page](https://github.com/kvandebeek/lunaratlas/relea
 
 | Your computer | Download | What to do |
 |---|---|---|
-| **macOS** (Apple silicon or Intel) | `LunarAtlas-1.0.0-macos-ARCH.dmg` | Open it, drag **LunarAtlas** to Applications. |
+| **macOS**, Apple silicon | `LunarAtlas-1.0.0-macos-arm64.dmg` | Open it, drag **LunarAtlas** to Applications. |
+| **macOS**, Intel | `LunarAtlas-1.0.0-macos-x64.dmg` | The same. |
 | **Windows** | `LunarAtlas-1.0.0-windows-setup.exe` | Run it. It installs for you alone and needs no administrator rights. |
-| **Linux** | `LunarAtlas-1.0.0-linux-ARCH.tar.gz` | Unpack it, then run `./LunarAtlas`, or `./install.sh` to get a menu entry. |
+| **Linux**, 64-bit | `LunarAtlas-1.0.0-linux-x64.tar.gz` | Unpack it, then run `./LunarAtlas`, or `./install.sh` to get a menu entry. |
 
-On macOS, pick the file matching your Mac: `arm64` for Apple silicon (M1 and later), `x86_64` for Intel.
+Not sure which Mac you have? Apple menu → **About This Mac**. "Apple M1" or later means `arm64`;
+"Intel" means `x64`.
 
 ## The first start warns you
 
