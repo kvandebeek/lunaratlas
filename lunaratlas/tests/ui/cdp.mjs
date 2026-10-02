@@ -55,7 +55,14 @@ export class Browser {
     const portFile = join(profile, 'DevToolsActivePort');
     for (let i = 0; i < 150 && !existsSync(portFile); i++) await sleep(100);
     if (!existsSync(portFile)) { proc.kill(); throw new Error('Chrome did not start'); }
-    const port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+    let raw;
+    // existsSync passing does not mean the file is done being written; on Windows, Chrome can still hold it
+    // locked for a few ms, and readFileSync then throws EBUSY instead of ENOENT
+    for (let i = 0; i < 20 && raw === undefined; i++) {
+      try { raw = readFileSync(portFile, 'utf8'); }
+      catch (e) { if (e.code !== 'EBUSY' || i === 19) throw e; await sleep(50); }
+    }
+    const port = raw.split('\n')[0].trim();
     let page;
     for (let i = 0; i < 50 && !page; i++) {
       try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page'); }
