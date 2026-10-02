@@ -529,7 +529,10 @@ const J = {
     await b.click('#xGrid');
     await ok(!(await b.js(`document.getElementById('xGrid').checked`)), 'the grid box can be unticked');
     await b.click('#xGo');
-    await ok(await b.js(`document.getElementById('xGo').disabled && !document.getElementById('xProg').hidden`), 'Export starts: button off, progress shown');
+    // the button turns off once the drawings are saved and the server took the job: two round trips, not instant
+    const started = `document.getElementById('xGo').disabled && !document.getElementById('xProg').hidden`;
+    await b.until(started, 5000, 'the export to start').catch(() => {});
+    await ok(await b.js(started), 'Export starts: button off, progress shown');
     await b.press('Escape');
     await ok(!(await b.js(`document.getElementById('export').hidden`)), 'Escape does not close the dialog while it runs');
     const done = await exported(b, 'png');
