@@ -415,26 +415,29 @@ def _kill_chrome(proc, profile):
         subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], capture_output=True)
 
 
-def dump_selftest(url, tmp, virtual_time_ms, attempts=3):
+def dump_selftest(url, tmp, virtual_time_ms, attempts=5):
     """Open `url` (a /selftest page) in headless Chrome with --dump-dom; return (match, log): the regex match of the
     page's <pre id="selftest">...</pre> (None if there was none) and Chrome's own stderr, with a note per launch
     that had to be given up on.
 
     A launch that works writes its dump within a few seconds on a quiet machine (1.4-2.9 s measured on Windows);
     one that is stuck never writes anything at all, however long it is given -- measured on a Windows 10 PC with
-    the same command line: 7 of 10 launches hung, every hung log carrying the updater's "Failed to open named
-    pipe server process ... Access is denied", every good launch an empty one. (macOS logs the same updater
-    family, Linux a GCM/D-Bus retry loop; the cause is Chrome's own startup, not this harness or the page.)
-    Neither --disable-background-networking nor --host-resolver-rules is the cause or the cure (same matrix:
-    hangs with, without, or with either alone). So do not wait out the long budget for something that
-    does not come: give each launch but the last a short patience, then kill it and start again with a fresh
-    profile. The last launch keeps the generous wait, so a healthy but slow runner is never cut off by this.
-    Only silence is retried: a launch that wrote a dump without the result in it is a real failure."""
-    patience = 10 + 5 * PERF                         # seconds; a good launch needs ~2 on a quiet machine
+    the same command line: 7 of 10 launches hung (and, with this retry in place and 3 launches, about 40% of
+    single launches still did: 8 of 10 runs passed). The same silent-launch signature appears in GitHub's Ubuntu
+    and macOS runner logs (GCM / D-Bus / updater noise) and once locally; the cause is Chrome's own startup, not
+    this harness or the page. Neither --disable-background-networking nor --host-resolver-rules is the cause or
+    the cure (same matrix: hangs with, without, or with either alone). So do not wait out a long budget for
+    something that does not come: each launch gets a patience, then is killed and started again on a fresh
+    profile. The patience grows with every launch (+50% each), so a healthy but slow runner that needs longer than
+    the first one is still not cut off by the later ones -- and the final launch no longer gets 120 s x PERF, which
+    is pure waste when stuck. Only silence is retried: a launch that wrote a dump without the result in it is
+    returned as the real failure it is. Every abandoned launch, and any slow success, is printed to stderr, so the
+    rate of this shows in CI logs instead of hiding behind a pass."""
+    base = 10 + 5 * PERF                             # seconds; a good launch needs ~2 on a quiet machine
     notes = []
     for n in range(1, attempts + 1):
         last = n == attempts
-        wait_for_it = budget(120) if last else patience
+        wait_for_it = base * (1 + 0.5 * (n - 1))
         profile = os.path.join(tmp, f'chrome-profile-{n}')
         dom, err = os.path.join(tmp, f'dom-{n}.html'), os.path.join(tmp, f'chrome-{n}.log')
         with open(dom, 'w') as out, open(err, 'w') as log:             # Chrome's helpers keep a pipe open: use files
@@ -451,22 +454,24 @@ def dump_selftest(url, tmp, virtual_time_ms, attempts=3):
             t0, text = time.time(), ''
             while time.time() - t0 < wait_for_it:
                 time.sleep(0.2)
+                exited = proc.poll() is not None      # BEFORE reading: an exited process's dump is complete when read
                 if os.path.exists(dom):
                     with open(dom, encoding='utf-8', errors='replace') as fh:
                         text = fh.read()
                 m = re.search(r'<pre id="selftest">(.*?)</pre>', text, re.S)
                 if m:
+                    took = time.time() - t0
+                    if n > 1 or took >= 5:                                # the fast common case stays quiet
+                        print(f'[launch {n} of {attempts}: dump after {took:.1f}s]', file=sys.stderr, flush=True)
                     with open(err, errors='replace') as fh:
                         return m, ''.join(notes) + fh.read()
-                if proc.poll() is not None and text.strip():
-                    break                                                # a dump without the result: real failure
-                if proc.poll() is not None:
-                    break                                                # exited without writing anything at all
+                if exited:
+                    break                                                # exited: nothing more is coming
             with open(err, errors='replace') as fh:
                 log = fh.read()
             if text.strip() or last:                                      # real failure, or out of attempts
                 return None, ''.join(notes) + log
-            why = 'exited without output' if proc.poll() is not None else f'wrote nothing in {wait_for_it:.0f}s'
+            why = f'exited ({proc.returncode}) without output' if proc.poll() is not None else f'wrote nothing in {wait_for_it:.0f}s'
             notes.append(f'[launch {n} of {attempts}: {why}, retrying with a fresh profile; its log: {log[-400:]!r}]\n')
             print(notes[-1].rstrip(), file=sys.stderr, flush=True)       # visible in the run, not only on failure
         finally:
