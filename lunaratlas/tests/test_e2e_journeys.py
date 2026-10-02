@@ -403,11 +403,18 @@ class BrowserJourneys(Journey):
         profile = os.path.join(self.tmp, 'chrome-profile')
         dom, err = os.path.join(self.tmp, 'dom.html'), os.path.join(self.tmp, 'chrome.log')
         with open(dom, 'w') as out, open(err, 'w') as log:              # Chrome's helpers keep the pipe open
-            # --disable-background-networking: without it, Chrome's own GCM push registration retries against a
-            # sandbox with no real route to Google (seen in CI and, once, locally) kept the process alive
-            # indefinitely, so --dump-dom (which only writes once the process is ready to exit) never did
+            # --disable-background-networking alone did not stop it: Chrome's GCM push-registration retries
+            # (real DNS/connect attempts against a sandbox with no real route out, each slow to time out, then
+            # retried with backoff) kept the process alive indefinitely -- --dump-dom only writes once the
+            # process is ready to exit, and --virtual-time-budget's clock stalls on a real pending network
+            # call regardless. Make every such lookup fail instantly instead of timing out -- EXCLUDE is
+            # required, not redundant: the wildcard MAP matches a literal IP too, not only names needing a real
+            # DNS lookup, so without it this also blackholed v.url itself (verified directly: with EXCLUDE,
+            # a request to our own local server comes back normally; without it, Chrome serves its own
+            # built-in directory-listing page for the (unreachable) address instead).
             proc = subprocess.Popen([S.find_chrome(), '--headless=new', '--disable-gpu', '--use-mock-keychain', '--no-first-run',
-                                     '--no-default-browser-check', '--disable-background-networking', f'--user-data-dir={profile}',
+                                     '--no-default-browser-check', '--disable-background-networking',
+                                     '--host-resolver-rules=MAP * 127.0.0.1:1,EXCLUDE 127.0.0.1', f'--user-data-dir={profile}',
                                      '--window-size=1400,900', f'--virtual-time-budget={budget}',
                                      '--dump-dom', f'{v.url}/selftest?group={group}&t={v.token}'], stdout=out, stderr=log)
         self.addCleanup(self.kill, proc, profile)

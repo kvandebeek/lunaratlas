@@ -6,6 +6,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node
 import { join } from 'node:path';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// every other timing budget in this suite scales by this (CI sets it higher; a slow dev machine can too), but
+// until()'s own timeouts never did, unlike every Python-side one -- found when a thumbnail round trip to a
+// real server endpoint genuinely took longer than 10s on slow hardware, not a browser-specific bug
+const PERF = Number(process.env.LUNARATLAS_PERF_FACTOR) || 1;
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
 // the platform's own shortcut key, as a user presses it
 export const CMD = process.platform === 'darwin' ? 'meta' : 'ctrl';
@@ -47,7 +51,10 @@ export class Browser {
     const proc = spawn(chrome, ['--headless=new', '--use-mock-keychain', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
       '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--mute-audio',
-      '--disable-background-networking',    // GCM/update/variations pings have no real route out in CI; let none start
+      // GCM/update/variations pings have no real route out in CI; fail them instantly rather than let them
+      // retry for minutes. EXCLUDE is required, not redundant: the wildcard MAP matches a literal IP too, so
+      // without it this also blackholes our own pages, always opened by IP literal (verified directly).
+      '--disable-background-networking', '--host-resolver-rules=MAP * 127.0.0.1:1,EXCLUDE 127.0.0.1',
       '--force-color-profile=srgb', '--disable-features=Translate,MediaRouter', `--window-size=${width},${height}`,
       // Edge on Linux ships without Chrome's setuid sandbox helper, so without this it never writes
       // DevToolsActivePort and exits silently; harmless here since this only ever opens our own test pages.
@@ -160,9 +167,9 @@ export class Browser {
     await this.until(ready, 20000, `page ${url}`);
   }
   async until(expr, ms = 10000, what = expr) {
-    const t0 = Date.now();
+    const t0 = Date.now(), budget = ms * PERF;
     let last;
-    while (Date.now() - t0 < ms) {
+    while (Date.now() - t0 < budget) {
       try { last = await this.js(expr); if (last) return last; } catch (e) { last = e.message; }
       await sleep(100);
     }
