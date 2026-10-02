@@ -120,7 +120,10 @@
       // non-craters, and the very next line needs a crater specifically to be among them
       for (let i = 0; i < 60 && !T.placed.some((p) => p.f.c === 'crater'); i++) await wait(200);
       const inp = document.getElementById('l-crater'), pill = inp.nextElementSibling;
-      ok(inp.checked && T.placed.some((p) => p.f.c === 'crater'), 'craters are on and named');
+      // the state is in the message because this has failed on CI (macOS) with the later checks, which assert the
+      // same crater condition, passing -- and nothing said whether the switch was off or no crater was placed yet
+      const nCrater = T.placed.filter((p) => p.f.c === 'crater').length;
+      ok(inp.checked && nCrater > 0, `craters are on and named (switch ${inp.checked ? 'on' : 'off'}, ${nCrater} crater names of ${T.placed.length} placed)`);
       pill.click(); await wait(60); T.render();
       ok(!inp.checked, 'a click on the switch turns craters off');
       ok(!T.placed.some((p) => p.f.c === 'crater'), 'and their names go');
