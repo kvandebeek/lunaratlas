@@ -1,6 +1,6 @@
 # Testing LunarAtlas
 
-1.0.1 is a first release. It has been built and measured on a Mac, and tested automatically on Windows
+1.0.2 is an early release. It has been built and measured on a Mac, and tested automatically on Windows
 and Linux, but almost all of its real use so far has been by one person with one telescope.
 
 That is the gap. If you have a photo and twenty minutes, you can close it.

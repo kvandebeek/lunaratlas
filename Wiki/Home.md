@@ -29,7 +29,7 @@ It handles full disks, any phase, mosaics, and close-ups that do not show the ed
 | **[Close-ups and your equipment](Close-ups-and-equipment)** | Photos without the Moon's edge in them, and why LunarAtlas asks what took them. |
 | **[The quality check](The-quality-check)** | Why a photo can be refused, what each reason means, and how to override it. |
 | **[Troubleshooting](Troubleshooting)** | It will not start, it cannot find the Moon, the download fails. |
-| **[Testing](Testing)** | 1.0.1 is a first release. What to try, and what is most useful to report. |
+| **[Testing](Testing)** | 1.0.2 is an early release. What to try, and what is most useful to report. |
 | **[Limits](Limits)** | What LunarAtlas does not do, honestly. |
 
 ## Going deeper

@@ -1,6 +1,8 @@
 # Release notes
 
-## Unreleased
+## 1.0.2 — Langrenus
+
+**The current release.** A bug fix.
 
 **A name made Large or Extra large no longer disappears**
 ([#1](https://github.com/kvandebeek/lunaratlas/issues/1)). Choosing **Large** or **Extra large** in a
@@ -14,7 +16,7 @@ for exported images, where such a name was missing as well.
 
 ## 1.0.1 — Langrenus
 
-**The current release**, and in practice the first one you can use.
+In practice the first release you can use.
 
 **macOS builds can be opened at all.** 1.0.0's macOS builds shipped with an invalid code signature: the
 build wrote the third-party licence notices into the app bundle *after* it had been sealed, which broke
