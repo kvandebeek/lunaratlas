@@ -2,7 +2,7 @@
 
 LunarAtlas comes as an ordinary app. You do not need Python, a terminal, or any other software.
 
-Get it from the **[releases page](https://github.com/kvandebeek/lunaratlas/releases)**. `VERSION` below is whatever the latest release is — 1.0.1 at the time of writing.
+Get it from the **[releases page](https://github.com/kvandebeek/lunaratlas/releases)**. `VERSION` below is whatever the latest release is — 1.0.2 at the time of writing.
 
 | Your computer | Download | What to do |
 |---|---|---|
