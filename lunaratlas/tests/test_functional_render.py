@@ -217,6 +217,105 @@ class Layout(unittest.TestCase):
         self.assertAlmostEqual(lab['x'], f['x'] + 30.0, delta=1e-6)
         self.assertAlmostEqual(lab['y'], home_y - 12.0, delta=1e-6)
 
+    def test_a_name_made_larger_is_never_dropped(self):
+        """Issue #1: Large or Extra large made a name vanish: larger, it found no free spot among its neighbours."""
+        base = {l['text']: l for l in self.place() if self.feats[l['feature']]['cls'] == 'crater'}
+        self.assertGreater(len(base), 15)
+        for factor in (1.3, 1.7):
+            ov = {self.feats[l['feature']]['name']: dict(size=factor) for l in base.values()}
+            grown = {l['text']: l for l in self.place(overrides=ov)}
+            self.assertEqual(set(base) - set(grown), set(), f'names lost at size {factor}')
+            self.assertTrue(all(grown[t]['size'] > base[t]['size'] for t in base), factor)
+
+    @S.label_sweep
+    def test_label_sizes_across_poses_and_views(self):
+        """Issue #1 without any image: layout is geometry, the gazetteer and font metrics only. Over seeded cases
+        spanning what the app allows -- photos from 640 x 480 to 6000 x 4000 holding a small full disk, a disk cut by
+        the frame or a close-up of a Moon ten times the frame (turned, mirrored); a 1400 x 900 screen anywhere on it
+        from the whole Moon in view to the viewer's deepest zoom (8 screen px per photo px); the Label size slider
+        (80-160 %) and the Detail slider (10-70) -- every name shown at Normal is still shown, its size following,
+        at Small, Large and Extra large: all names resized at once, and the most crowded ones one at a time. Beside
+        a larger name the names nobody resized never overlap."""
+        rng = np.random.default_rng(1)
+        shown = []
+        VW, VH = 1400, 900                                                   # the viewer's window, as in the browser tests
+        for case in range(24):
+            W, H = [(640, 480), (1100, 1000), (3000, 2000), (6000, 4000)][case % 4]
+            kind = case % 3
+            R = float(rng.uniform(0.15, 0.48) * min(W, H) if kind == 0 else          # a full disk, small to filling
+                      rng.uniform(0.5, 1.2) * min(W, H) if kind == 1 else            # cut by the frame
+                      rng.uniform(2, 10) * max(W, H))                                # a close-up
+            reach = 0.05 * min(W, H) if kind == 0 else 0.6 * R if kind == 1 else 0.8 * R
+            geo = S.truth_geometry(R=R, cx=W / 2 + rng.uniform(-1, 1) * reach, cy=H / 2 + rng.uniform(-1, 1) * reach,
+                                   theta=float(rng.uniform(0, 360)), mirror=bool(case % 2))
+            feats = S.projected_features(geo)
+            fit = min(VW / W, VH / H)
+            scale = float(np.exp(rng.uniform(np.log(min(fit, 0.3 * min(VW, VH) / R)), np.log(8))))     # minS() to maxS
+            while True:                                                      # the screen centred on the Moon in the photo
+                cx, cy = rng.uniform(0, W), rng.uniform(0, H)
+                if math.hypot(cx - geo.t[0], cy - geo.t[1]) < 0.95 * R:
+                    break
+            x0, y0 = cx - VW / 2 / scale, cy - VH / 2 / scale
+            kw = dict(font_scale=float(rng.uniform(0.8, 1.6)), min_px=int(rng.integers(10, 71)))
+            place = lambda ov=None: ar.layout(feats, geo, (x0, y0, scale, VW, VH), self.fonts, overrides=ov, **kw)
+            what = f'case {case}: {W}x{H}, R {R:.0f}, zoom {scale:.2f}, font {kw["font_scale"]:.2f}, detail {kw["min_px"]}'
+            W, H = VW, VH                                                    # the frame the names must stay inside
+            base = {self.feats_name(feats, l): l for l in place()}
+            shown.append(len(base))
+            for factor in (1.3, 1.7):                     # all at once smaller would reflow every name: one at a time below
+                got = {self.feats_name(feats, l): l for l in place({n: dict(size=factor) for n in base})}
+                self.assertEqual(set(base) - set(got), set(), f'{what}: lost at {factor} all at once')
+                self.assertTrue(all(got[n]['size'] > base[n]['size'] for n in base), f'{what}, {factor}')
+                self.assertTrue(all(0 <= b[0] and b[2] <= W and 0 <= b[1] and b[3] <= H for b in map(label_box, got.values())),
+                                f'{what}: a name crosses the frame at {factor}')
+            crowd = sorted(base, key=lambda n: min((math.hypot(base[n]['x'] - l['x'], base[n]['y'] - l['y'])
+                                                    for m, l in base.items() if m != n), default=1e9))[:5]
+            for n in crowd:
+                for factor in (0.8, 1.3, 1.7):
+                    got = place({n: dict(size=factor)})
+                    names = [self.feats_name(feats, l) for l in got]
+                    self.assertIn(n, names, f'{what}: {n} lost at {factor}')
+                    if factor < 1:
+                        continue                            # Small is not placed first: the others keep their own rule
+                    rest = [label_box(l) for l, m in zip(got, names) if m != n]
+                    for i in range(len(rest)):
+                        for j in range(i + 1, len(rest)):
+                            self.assertFalse(boxes_overlap(rest[i], rest[j]), f'{what}: names overlap beside {n}')
+        self.assertLessEqual(shown.count(0), 2, f'cases with no name to try: {shown}')      # a gap at deep zoom may be bare
+
+    @S.label_sweep
+    def test_label_sizes_at_every_detail_level(self):
+        """Issue #1 over the grid of the viewer's two sliders and its zoom: Detail (10, 24, 45, 70, the slider's ends
+        and between) x Label size (80, 100, 160 %) x the whole disk, zoomed in and the deepest zoom (8x), on a 1400 x
+        900 screen centred on Mare Imbrium's crowded rim. At each: every name resized at once is still shown, larger,
+        inside the screen, and the most crowded names survive Small, Large and Extra large one at a time."""
+        VW, VH = 1400, 900
+        cx, cy = next((f['x'], f['y']) for f in self.feats if f['name'] == 'Plato')
+        for min_px in (10, 24, 45, 70):
+            for fs in (0.8, 1.0, 1.6):
+                for scale in (min(VW / S.DISK['W'], VH / S.DISK['H']), 2.0, 8.0):
+                    view = (S.DISK['cx'] - VW / 2 / scale, S.DISK['cy'] - VH / 2 / scale, scale, VW, VH) if scale < 1 \
+                        else (cx - VW / 2 / scale, cy - VH / 2 / scale, scale, VW, VH)
+                    place = lambda ov=None: ar.layout(self.feats, self.geo, view, self.fonts, min_px=min_px, font_scale=fs, overrides=ov)
+                    what = f'detail {min_px}, label size {fs:.0%}, zoom {scale:.2f}'
+                    base = {self.feats_name(self.feats, l): l for l in place()}
+                    for factor in (1.3, 1.7):
+                        got = {self.feats_name(self.feats, l): l for l in place({n: dict(size=factor) for n in base})}
+                        self.assertEqual(set(base) - set(got), set(), f'{what}: lost at {factor} all at once')
+                        self.assertTrue(all(got[n]['size'] > base[n]['size'] for n in base), f'{what}, {factor}')
+                        self.assertTrue(all(0 <= b[0] and b[2] <= VW and 0 <= b[1] and b[3] <= VH for b in map(label_box, got.values())),
+                                        f'{what}: a name crosses the screen at {factor}')
+                    crowd = sorted(base, key=lambda n: min((math.hypot(base[n]['x'] - l['x'], base[n]['y'] - l['y'])
+                                                            for m, l in base.items() if m != n), default=1e9))[:2]
+                    for n in crowd:
+                        for factor in (0.8, 1.3, 1.7):
+                            self.assertIn(n, [self.feats_name(self.feats, l) for l in place({n: dict(size=factor)})],
+                                          f'{what}: {n} lost at {factor}')
+
+    @staticmethod
+    def feats_name(feats, label):
+        return feats[label['feature']]['name']
+
     def test_a_moved_name_keeps_a_line_to_its_feature(self):
         self.assertFalse(any('leader' in l for l in self.place()), 'names left in place have no line')
         lab = next(l for l in self.place(overrides={'Copernicus': dict(dx=120.0, dy=90.0)}) if l['text'] == 'Copernicus')

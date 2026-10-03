@@ -16,6 +16,10 @@ on:
         description: 'Slow tests and the close-up relief (≈ 530 MB more download)'
         type: boolean
         default: false
+      labels:
+        description: 'The label sweeps too (after a change to how names are placed; full includes them)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read              # what the build and the tests need; only the release job may write
@@ -35,6 +39,7 @@ jobs:
       TESTS: ${{ inputs.tests }}
       FULL: ${{ inputs.full && '1' || '' }}
       LUNARATLAS_SLOW_TESTS: ${{ inputs.full && '1' || '' }}
+      LUNARATLAS_LABEL_TESTS: ${{ (inputs.full || inputs.labels) && '1' || '' }}
       # shared CI runners are slower than a desktop; Windows runners measurably more so for headless Chrome
       LUNARATLAS_PERF_FACTOR: ${{ matrix.os == 'windows-latest' && '6' || '3' }}
       LUNARATLAS_UI_OUT: ${{ github.workspace }}/ui-screenshots     # a screenshot per failed UI check
@@ -86,6 +91,7 @@ jobs:
         run: |
           allowed='does not distinguish the two forms|no hard links here|disabled by request: exceeds runtime target|does not stop a write into a read-only folder|symlinks need POSIX|modes need POSIX|no SIGKILL on this platform|SIGINT cannot be sent this way on Windows'
           [ -z "$FULL" ] && allowed="$allowed|slow test|64 px/deg"
+          [ -z "$LUNARATLAS_LABEL_TESTS" ] && allowed="$allowed|label sweep"
           bad=$(grep -E "skipped '" test.log | grep -vE "$allowed" || true)
           if [ -n "$bad" ]; then echo "$bad"; echo "::error::tests were skipped"; exit 1; fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7

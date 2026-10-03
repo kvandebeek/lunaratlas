@@ -207,7 +207,10 @@ class ViewerMatchesExport(unittest.TestCase):
                  ('geo.km_per_px / scale > 3.0', 'kmPerScreenPx > 3'), ('light[i] < 0.12', 'f.lit < 0.12'),
                  ('track, txt = np.clip(Dpx * 0.05, 15, 34), 300, C[\'area\'], 0.22', 'track = 0.22'),
                  ('math.log2(max(Dpx, 1e-3) / min_px + 1)', 'Math.log2(Math.max(D, 1e-3) / minPx + 1)'),
-                 ('R * 0.995', 'R * 0.995'), ('g = 4 * font_scale', 'g = 4 * fs'), ('g = 7 * font_scale', 'g = 7 * fs')]
+                 ('R * 0.995', 'R * 0.995'), ('g = 4 * font_scale', 'g = 4 * fs'), ('g = 7 * font_scale', 'g = 7 * fs'),
+                 # a name made larger goes first, then each spot again without the checks, kept inside the frame (issue #1)
+                 ("get('size', 1) > 1", '.size > 1'), ('spots = spots + spots', 'spots = [...spots, ...spots]'),
+                 ('if j >= n:', 'if (i >= n) {')]
         for py, js in pairs:
             self.assertIn(py.split(", C['area']")[0] if 'track, txt' in py else py, self.py, 'atlas_render.layout changed')
             self.assertIn(js, self.js, f'viewer.js layout() no longer matches atlas_render.layout: {js}')
