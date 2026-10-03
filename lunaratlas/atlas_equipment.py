@@ -146,14 +146,20 @@ def clean(d):
 _cache = (None, None)
 
 
+def _key(p):
+    # the file's identity too: save() writes a new file and renames it over the old one, and on Windows two saves
+    # within one clock tick keep the same mtime -- and, after only reordering `recent`, the same size
+    st = os.stat(p)
+    return (p, st.st_ino, st.st_mtime_ns, st.st_size)
+
+
 def load():
     """The equipment in effect: the file's, checked; nothing at all when there is none or it cannot be read.
     (A copy: read again only when the file changed, since the ephemeris asks for the site on every call.)"""
     global _cache
     p = path()
     try:
-        st = os.stat(p)
-        key = (p, st.st_mtime_ns, st.st_size)
+        key = _key(p)
     except OSError:
         return empty()
     if _cache[0] != key:
@@ -183,6 +189,11 @@ def save(d):
         except OSError:
             pass
         raise
+    global _cache
+    try:
+        _cache = (_key(p), json.loads(json.dumps(d)))     # what was just written is what load() gives next
+    except OSError:
+        _cache = (None, None)
     return d
 
 

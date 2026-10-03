@@ -67,6 +67,16 @@ class Equipment(Own, unittest.TestCase):
         self.assertEqual([t['id'] for t in d['telescopes']], ['t7', 't1'], 'a repeated id gets a new one')
         self.assertEqual(d['unused'], [], 'only setups that exist are kept')
 
+    def test_a_save_is_read_back_even_when_the_file_looks_unchanged(self):
+        """On Windows two saves within one clock tick keep the file's time, and reordering `recent` keeps its size:
+        load() handed back the order from before the save (CI, windows-latest)."""
+        d, sid = eq.add(TEL, None, CAM)
+        d, sid2 = eq.add(TEL, dict(name='Barlow', factor=2), CAM)
+        with mock.patch.object(eq, '_key', return_value=('the same file, time and size',)):
+            eq.load()
+            eq.remember(sid)
+            self.assertEqual(eq.load()['recent'], [sid, sid2])
+
     def test_saved_for_this_user_only_and_read_back(self):
         eq.save(dict(telescopes=[TEL], cameras=[CAM], site=dict(lat=48.2, lon=16.4, height_m=200)))
         if os.name == 'posix':
