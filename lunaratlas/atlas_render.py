@@ -305,6 +305,10 @@ def layout(feats, geo, view, fonts, min_px=24, font_scale=1.0, rims=True, letter
         occ[max(0, int(by0 // cell)):max(0, int(by1 // cell) + 1), max(0, int(bx0 // cell)):max(0, int(bx1 // cell) + 1)] = True
     rank = {'area': 0, 'crater': 1, 'relief': 2, 'landing': 3, 'site': 2, 'lettered': 4, 'apollo': 5}
     order = sorted(range(len(feats)), key=lambda i: (rank.get(feats[i]['cls'], 4), -feats[i]['diam']))
+    # a name made larger in the viewer goes first and is never dropped, as there (viewer.js layout(), issue #1)
+    grown = {n for n, v in overrides.items() if (clean_label_override(v) or {}).get('size', 1) > 1}
+    if grown:
+        order.sort(key=lambda i: feats[i]['name'] not in grown)
     out = []
     for i in order:
         f = feats[i]
@@ -365,15 +369,24 @@ def layout(feats, geo, view, fonts, min_px=24, font_scale=1.0, rims=True, letter
         moved = 'dx' in ov and 'dy' in ov
         if moved:                                        # the user's placement: first spot + their offset, no search
             spots = [(spots[0][0] + float(ov['dx']) * scale, spots[0][1] + float(ov['dy']) * scale)]
-        for sx, sy in spots:
+        force, n = not moved and f['name'] in grown, len(spots)
+        if force:                                        # each spot again, last, without the checks
+            spots = spots + spots
+        for j, (sx, sy) in enumerate(spots):
             px, py = 3 + size * 0.12, 2 + size * 0.3        # descenders and the soft shade belong to the name (as in the viewer)
+            if j >= n:                                   # forced: its place in the frame, the name inside it
+                if not (0 <= sx <= W and 0 <= sy <= H):
+                    continue
+                sx = min(max(sx, tw / 2 + px + cell), max(tw / 2 + px + cell, W - tw / 2 - px - 2 * cell))
+                sy = min(max(sy, th / 2 + py + cell), max(th / 2 + py + cell, H - th / 2 - py - 2 * cell))
             bx0, by0, bx1, by1 = sx - tw / 2 - px, sy - th / 2 - py, sx + tw / 2 + px, sy + th / 2 + py
-            if not moved and keep_on_disk and max(math.hypot(px - cx, py - cy) for px in (bx0, bx1) for py in (by0, by1)) > R * 0.995:
+            free = moved or j >= n
+            if not free and keep_on_disk and max(math.hypot(px - cx, py - cy) for px in (bx0, bx1) for py in (by0, by1)) > R * 0.995:
                 continue
             a0, b0, a1, b1 = int(bx0 // cell), int(by0 // cell), int(bx1 // cell) + 1, int(by1 // cell) + 1
             if a0 < 0 or b0 < 0 or a1 >= occ.shape[1] or b1 >= occ.shape[0]:
                 continue
-            if not moved and occ[b0:b1, a0:a1].any():
+            if not free and occ[b0:b1, a0:a1].any():
                 continue
             occ[b0:b1, a0:a1] = True
             lab = dict(text=txt, weight=wt, size=size, italic=italic, track=track, x=sx, y=sy, w=tw, h=th,

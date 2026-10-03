@@ -132,7 +132,7 @@ NOT_SETTINGS = frozenset((
     'LUNARATLAS_TOKEN', 'LUNARATLAS_DATA', 'LUNARATLAS_SELFTEST', 'LUNARATLAS_VERSION',        # the app itself
     'LUNARATLAS_ALLOW_GPL_CODECS',                                                             # packaging/build.py
     'LUNARATLAS_PERF_FACTOR', 'LUNARATLAS_SLOW_TESTS', 'LUNARATLAS_UI_OUT', 'LUNARATLAS_BROWSER',   # the test suite
-    'LUNARATLAS_CHROME', 'LUNARATLAS_EDGE', 'LUNARATLAS_WEBDRIVER', 'LUNARATLAS_JS_COVERAGE',
+    'LUNARATLAS_CHROME', 'LUNARATLAS_EDGE', 'LUNARATLAS_WEBDRIVER', 'LUNARATLAS_JS_COVERAGE', 'LUNARATLAS_LABEL_TESTS',
     'LUNARATLAS_EQUIPMENT',                                                                    # atlas_equipment
 ))
 # settings that were here once and now live in equipment.json (the app's Settings): reported, never used

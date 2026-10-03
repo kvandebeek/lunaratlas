@@ -401,7 +401,7 @@ class BrowserJourneys(Journey):
         super().setUp()
         self.img, self.geo = S.moon_image(self.tmp)
 
-    def drive(self, group, budget=None):
+    def drive(self, group, budget=None, patience=30):
         """Run one journey group and return the PASS lines it wrote into <pre id="selftest">."""
         # Chrome's own --virtual-time-budget, in simulated ms: real work gated behind it (image decode, the
         # gazetteer fetch, label layout) still costs real CPU time, so a loaded CI runner can run out of this
@@ -411,7 +411,7 @@ class BrowserJourneys(Journey):
         self.addCleanup(v.close)
         # in real time through Node (S.run_selftest); --dump-dom's virtual time stalled groups partway on CI runners
         url = f'{v.url}/selftest?group={group}&t={v.token}'
-        m, log_text = S.run_selftest(url, self.tmp, 30) if S.NODE else S.dump_selftest(url, self.tmp, budget)
+        m, log_text = S.run_selftest(url, self.tmp, patience) if S.NODE else S.dump_selftest(url, self.tmp, budget)
         self.assertIsNotNone(m, f'the {group} self-test wrote no result:\n{log_text[-2000:]}')
         lines = html.unescape(m[1]).splitlines()
         self.assertEqual([l for l in lines if not l.startswith('PASS')], [], '\n'.join(lines) + log_text[-800:])
@@ -447,6 +447,27 @@ class BrowserJourneys(Journey):
         lines = self.drive('card')
         self.assertEqual(len(lines), 5, lines)
         self.assertTrue(any('does not cover' in l for l in lines), lines)
+
+    def test_a_name_made_larger_from_its_card_grows_instead_of_vanishing(self):
+        lines = self.drive('sizes')
+        self.assertEqual(len(lines), 5, '\n'.join(lines))
+        self.assertTrue(any('Extra large' in l for l in lines), '\n'.join(lines))
+        self.assertEqual(S.sidecar(self.img).get('edits', {}).get('labels', {}), {},
+                         'the sizes journey must leave the sidecar as it found it')
+
+    @S.label_sweep
+    def test_no_name_vanishes_at_any_size_zoomed_in_or_out(self):
+        lines = self.drive('sizesweep', budget=int(120000 * S.PERF), patience=120)
+        self.assertEqual(len(lines), 3, '\n'.join(lines))
+        self.assertEqual(S.sidecar(self.img).get('edits', {}).get('labels', {}), {},
+                         'the size sweep must leave the sidecar as it found it')
+
+    @S.label_sweep
+    def test_no_name_vanishes_at_any_size_on_a_close_up(self):
+        """The same on a photo of part of the Moon: the disk four times larger than the frame, no limb in it."""
+        self.img, self.geo = S.moon_image(self.tmp, 'closeup.tif', R=1800.0, cx=900.0, cy=300.0)
+        lines = self.drive('sizesweep', budget=int(120000 * S.PERF), patience=120)
+        self.assertEqual(len(lines), 3, '\n'.join(lines))
 
     def test_a_measurement_is_drawn_undone_redone_and_reaches_the_sidecar(self):
         lines = self.drive('measure')

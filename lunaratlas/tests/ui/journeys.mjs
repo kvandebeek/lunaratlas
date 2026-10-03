@@ -361,7 +361,8 @@ const J = {
     await ok(await b.js(`document.querySelector('#info .colours button:nth-child(3)').classList.contains('on')`), 'a colour click restyles the name and marks the colour');
     await b.choose('#lSize', '1.3');
     await serverHas(b, (e) => e.labels[p.n].size === 1.3, 'the label size');
-    await ok(true, 'the size menu makes the name larger');
+    await ok(await b.js(`(() => { __atlas.render(); return __atlas.placed.some((q) => q.f.n === ${JSON.stringify(p.n)}); })()`),
+      'the size menu makes the name larger, and it stays on screen');
     p = await b.js(`(() => { __atlas.render(); const q = __atlas.placed.find((q) => q.f.n === ${JSON.stringify(p.n)}); return { x: q.x, y: q.y, n: q.f.n }; })()`);
     await b.drag(p.x, p.y, p.x + 50, p.y + 35);
     await serverHas(b, (e) => e.labels[p.n].dx != null, 'the moved label');

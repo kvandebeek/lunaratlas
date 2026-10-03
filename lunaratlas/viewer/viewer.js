@@ -271,7 +271,11 @@
     const [dcx, dcy] = scr(G.t[0], G.t[1]), R = A.radius_px * view.s;
     const minPx = set.minPx, fs = set.fs, kmPerScreenPx = A.km_per_px / view.s;
     const out = [];
-    for (const f of ORDER) {
+    // a name made larger from its card goes first and is never dropped: larger, it seldom finds a free spot
+    // among its neighbours, and a name that vanishes when asked to grow reads as a broken menu (issue #1)
+    const grown = (f) => (E.labels[f.n] || {}).size > 1;
+    const seq = ORDER.some(grown) ? [...ORDER.filter(grown), ...ORDER.filter((f) => !grown(f))] : ORDER;
+    for (const f of seq) {
       const layer = LAYER[f.c];
       if (!shown(layer) || f.z < 0.1 || hiddenSet.has(f.n) || mine.has(f.key)) continue;
       let alpha = 1;
@@ -299,10 +303,17 @@
       } else spots = [[X, Y]];
       const home = spots[0], moved = ov.dx != null && ov.dy != null;
       if (moved) spots = [[home[0] + ov.dx * view.s, home[1] + ov.dy * view.s]];
-      for (const [sx, sy] of spots) {
+      const force = !moved && ov.size > 1, n = spots.length;
+      if (force) spots = [...spots, ...spots];                      // each spot again, last, without the checks
+      for (let [i, [sx, sy]] of spots.entries()) {
         const px = 3 + size * 0.12, py = 2 + size * 0.3;            // descenders and the soft shade belong to the name
+        if (i >= n) {                                               // forced: its place on the canvas, the name inside it
+          if (sx < 0 || sy < 0 || sx > VW || sy > VH) continue;
+          const mx = tw / 2 + px + 2, my = th / 2 + py + 2;          // 2 px clear of the edge
+          sx = clamp(sx, mx, Math.max(mx, VW - mx)); sy = clamp(sy, my, Math.max(my, VH - my));
+        }
         const bx0 = sx - tw / 2 - px, by0 = sy - th / 2 - py, bx1 = sx + tw / 2 + px, by1 = sy + th / 2 + py;
-        if (!moved) {
+        if (!moved && i < n) {
           if (bx0 < 0 || by0 < 0 || bx1 > VW || by1 > VH) continue;
           let off = false;
           for (const [px, py] of [[bx0, by0], [bx1, by0], [bx0, by1], [bx1, by1]]) if (Math.hypot(px - dcx, py - dcy) > R * 0.995) { off = true; break; }

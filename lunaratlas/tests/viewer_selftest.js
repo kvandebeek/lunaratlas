@@ -158,6 +158,78 @@
       document.getElementById('layersHead').click(); await wait(60);
     },
 
+    // issue #1: Large and Extra large on a name's card made the name vanish instead of grow. The most crowded
+    // name is the one that used to go: larger, it found no free spot among its neighbours
+    async sizes() {
+      for (let i = 0; i < 60 && T.placed.length === 0; i++) await wait(200);
+      await Promise.race([document.fonts.ready, wait(5000)]); await wait(300); T.render();
+      const near = (p) => Math.min(...T.placed.filter((q) => q !== p).map((q) => Math.hypot(q.x - p.x, q.y - p.y)));
+      const p = T.placed.filter((q) => q.f.c === 'crater' && q.x < innerWidth - 420 && q.x > 120 && q.y > 100 && q.y < innerHeight - 100)
+        .sort((a, b) => near(a) - near(b))[0];
+      ok(!!p, 'a crowded crater name to click');
+      const name = p.f.n, size0 = p.size;
+      await click(p.x, p.y);
+      const sel = document.getElementById('lSize');
+      ok(!!sel, `a click on ${name} opens its card with the size menu`);
+      for (const [label, v] of [['Large', '1.3'], ['Extra large', '1.7']]) {
+        sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); await wait(60); T.render();
+        const q = T.placed.find((q) => q.f.n === name);
+        ok(!!q && q.size > size0, `${label}: ${name} is still shown, and larger (${size0} then ${q ? q.size : 'gone'})`);
+      }
+      key('z', { metaKey: true }); key('z', { metaKey: true }); await wait(500);
+      ok(!T.edits.labels[name], 'two undos put the size back');
+      document.getElementById('infoClose').click(); await wait(60);
+    },
+
+    // issue #1 at every zoom: zoomed in all the way (8x), at the fit and zoomed out past it, and with the Label size
+    // and Detail sliders at their ends, a name shown at Normal stays shown at every other size, the crowded ones above all. ?names=N checks N names per zoom (6 by default)
+    async sizesweep() {
+      for (let i = 0; i < 60 && T.placed.length === 0; i++) await wait(200);
+      await Promise.race([document.fonts.ready, wait(5000)]); await wait(300);
+      const per = +new URLSearchParams(location.search).get('names') || 6, card = document.getElementById('info');
+      const at = (name) => { T.render(); return T.placed.find((q) => q.f.n === name); };
+      const near = (p) => Math.min(Infinity, ...T.placed.filter((q) => q !== p).map((q) => Math.hypot(q.x - p.x, q.y - p.y)));
+      // keys, or the Label size (80-160 %) and Detail (10-70) sliders; a step with no name to it is only passed through
+      const slider = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      const steps = [['f', 'the fit'], ['+', 'zoomed in'], ['+', 'zoomed in twice'], ['+', 'zoomed in three times'],
+                     ['+', ''], ['+', ''], ['+', 'zoomed in all the way'], ['f', ''], ['-', ''], ['-', ''], ['-', 'zoomed out past the fit'],
+                     ['fs:1.6', 'Label size 160 %, zoomed out'], ['f', 'Label size 160 %, the fit'],
+                     ['+', ''], ['+', 'Label size 160 %, zoomed in'], ['fs:0.8', 'Label size 80 %, zoomed in'], ['f', 'Label size 80 %, the fit'],
+                     ['mp:10', 'Detail 10, Label size 80 %, the fit'], ['+', ''], ['+', 'Detail 10, zoomed in'],
+                     ['fs:1.6', 'Detail 10, Label size 160 %, zoomed in'], ['mp:70', 'Detail 70, Label size 160 %, zoomed in'],
+                     ['f', 'Detail 70, Label size 160 %, the fit'], ['fs:0.8', 'Detail 70, Label size 80 %, the fit']];
+      const lost = [];
+      let tried = 0, zooms = 0, deepest = 0;
+      for (const [k, where] of steps) {
+        if (k.startsWith('fs:')) slider('fs', k.slice(3)); else if (k.startsWith('mp:')) slider('minPx', k.slice(3)); else key(k);
+        await wait(900); T.render();
+        if (!where) continue;
+        zooms++; deepest = Math.max(deepest, T.view.s);
+        const cand = T.placed.filter((q) => q.x < innerWidth - 420 && q.x > 120 && q.y > 100 && q.y < innerHeight - 100)
+          .sort((a, b) => near(a) - near(b)).slice(0, per).map((q) => q.f.n);
+        for (const name of cand) {
+          const p = at(name); if (!p) continue;
+          await click(p.x, p.y);
+          const sel = document.getElementById('lSize');
+          if (card.hidden || !sel || !at(name)) { if (!card.hidden) document.getElementById('infoClose').click(); await wait(60); continue; }  // under the card
+          tried++;
+          const size1 = at(name).size;
+          for (const [label, v] of [['Small', '0.8'], ['Large', '1.3'], ['Extra large', '1.7'], ['Normal', '1']]) {
+            sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); await wait(40);
+            const q = at(name);
+            if (!q) lost.push(`${name} at ${label}, ${where} (zoom ${T.view.s.toFixed(2)})`);
+            else if ((+v > 1 && q.size <= size1) || (+v < 1 && q.size > size1)) lost.push(`${name} at ${label} did not change size, ${where}`);
+            else if (q.box[0] < 0 || q.box[1] < 0 || q.box[2] > innerWidth || q.box[3] > innerHeight) lost.push(`${name} at ${label} crosses the edge, ${where}`);
+          }
+          document.getElementById('infoClose').click(); await wait(60);
+        }
+      }
+      ok(zooms === 17 && tried >= zooms * 2, `names tried at ${zooms} zooms, label sizes and detail levels (${tried} in all, deepest zoom ${deepest.toFixed(2)})`);
+      ok(lost.length === 0, `no name vanished, kept its size or crossed the edge at any zoom or size${lost.length ? ': ' + lost.slice(0, 6).join('; ') : ''}`);
+      ok(Object.keys(T.edits.labels).length === 0, 'Normal again leaves no style behind');
+      slider('fs', '1'); slider('minPx', '24'); key('f'); await wait(600);
+    },
+
     // the fixes from BUGS_AND_DESIGN_CHOICES.md: lettered craters follow the craters, a moved name keeps its line,
     // a dashed arrow keeps a solid head, a click on a saved measurement with the Measure tool picks it up
     async fixes() {

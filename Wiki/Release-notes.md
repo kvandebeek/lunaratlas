@@ -1,5 +1,17 @@
 # Release notes
 
+## Unreleased
+
+**A name made Large or Extra large no longer disappears**
+([#1](https://github.com/kvandebeek/lunaratlas/issues/1)). Choosing **Large** or **Extra large** in a
+name's card made the name vanish instead of grow, and only **Small** or **Normal** brought it back. The
+names are placed so they never overlap, and a larger name often found no free spot among its
+neighbours, so it was left out without a word. A name you make larger now always keeps its place, and
+its neighbours make room for it. It also stays inside the screen when it sits near an edge. The same goes
+for exported images, where such a name was missing as well.
+
+---
+
 ## 1.0.1 — Langrenus
 
 **The current release**, and in practice the first one you can use.

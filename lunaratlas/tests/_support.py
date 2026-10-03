@@ -3,6 +3,9 @@
     python3 lunaratlas/tests/run_tests.py                         # the whole suite, with percent complete
     python3 lunaratlas/tests/run_tests.py --pattern 'test_e2e*'   # one kind
     LUNARATLAS_SLOW_TESTS=1 ...          also the slow tests (close-up search, mirrored and crescent locate)
+    LUNARATLAS_LABEL_TESTS=1 ...         also the label sweeps (every zoom, photo scale, size and slider; ≈ 2.5 min):
+                                         run them after a change to how names are placed (viewer.js layout(),
+                                         atlas_render.layout()); the slow tests include them
     LUNARATLAS_PERF_FACTOR=3 ...         a slower machine: every performance budget × 3
     LUNARATLAS_UI_OUT=DIR ...            keep test_ui's screenshots of failed checks in DIR
     LUNARATLAS_BROWSER=firefox ...       test_ui in chrome (default), edge, firefox or safari
@@ -112,6 +115,7 @@ except AttributeError:
 DATA = os.path.join(PKG, 'data')
 CLI = os.path.join(PKG, 'lunaratlas.py')
 SLOW = os.environ.get('LUNARATLAS_SLOW_TESTS', '') not in ('', '0')
+LABELS = SLOW or os.environ.get('LUNARATLAS_LABEL_TESTS', '') not in ('', '0')
 PERF = float(os.environ.get('LUNARATLAS_PERF_FACTOR', '1') or 1)
 NODE = shutil.which("node")                       # the self-test runs through it when present (run_selftest)
 
@@ -140,6 +144,7 @@ needs_font = unittest.skipUnless(HAVE_ROBOTO, 'Roboto not in lunaratlas/fonts')
 needs_all = unittest.skipUnless(HAVE_REFERENCE and HAVE_RELIEF16 and HAVE_FEATURES and HAVE_ROBOTO,
                                 'reference data (albedo, LOLA 16, IAU list, Roboto) not in lunaratlas/data')
 slow = unittest.skipUnless(SLOW, 'slow test: set LUNARATLAS_SLOW_TESTS=1')
+label_sweep = unittest.skipUnless(LABELS, 'label sweep: set LUNARATLAS_LABEL_TESTS=1 after a change to label placement')
 disabled_for_speed = unittest.skip('disabled by request: exceeds runtime target')
 
 
